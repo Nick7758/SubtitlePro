@@ -1,0 +1,54 @@
+{
+  "user": {
+    "username": "",
+    "api_key": "",
+    "token": "",
+    "token_expiry": "",
+    "phone": "",
+    "email": "",
+    "auto_login": false
+  },
+  "app": {
+    "theme": "default",
+    "language": "zh_CN",
+    "check_updates": true,
+    "last_update_check": ""
+  },
+  "download": {
+    "save_path": "C:\\Users\\MagicBook\\Desktop\\DVP\\DVP\\Downloads",
+    "overwrite_existing": false,
+    "max_concurrent_downloads": 2,
+    "video_quality": "best",
+    "use_cookies": true,
+    "cookie_path": "C:\\Users\\MagicBook\\Desktop\\DVP\\DVP\\cookies"
+  },
+  "processing": {
+    "ffmpeg_threads": 0,
+    "subtitle_font": "SimHei",
+    "subtitle_size": 16,
+    "subtitle_color": "&HFFFFFF&",
+    "subtitle_back_color": "&H000000&",
+    "subtitle_border": 1,
+    "subtitle_shadow": 1,
+    "cache_path": "C:\\Users\\MagicBook\\Desktop\\DVP\\DVP\\cache"
+  },
+  "ui": {
+    "window_size": [
+      900,
+      600
+    ],
+    "window_position": [
+      100,
+      100
+    ],
+    "maximized": false,
+    "show_toolbar": true,
+    "recent_files": []
+  },
+  "logging": {
+    "enabled": true,
+    "level": "INFO",
+    "max_size": 10485760,
+    "backup_count": 5
+  }
+}

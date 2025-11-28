@@ -1,0 +1,16 @@
+# Ignore generated folders
+.idea/
+__pycache__/
+cache/
+Result/
+Downloads/
+env/
+# Ignore heavy binary files (This stops the crash!)
+*.exe
+resources/bin/
+build/
+dist/
+Installer_Output/
+run.iss
+NickSub.spec
+nick.py
