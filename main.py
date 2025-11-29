@@ -17,6 +17,7 @@ from ui.pages import UploadPage, DownloadPage, BillingPage, SettingsPage
 # --- robust base dir (works in dev & PyInstaller) ---
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 
+
 def _detect_resources_dir() -> str:
     """检测resources目录位置，确保在不同分发环境下都能正确找到资源"""
     candidates = [
@@ -29,14 +30,16 @@ def _detect_resources_dir() -> str:
     for p in candidates:
         if os.path.isdir(p):
             ff = os.path.join(p, "bin", "ffmpeg.exe")
-            if os.path.isfile(ff): 
+            if os.path.isfile(ff):
                 return p
             best = best or p
     return best or os.path.join(BASE_DIR, "resources")
 
+
 # 确保在加载配置之前先检测资源目录
 RESOURCES_DIR = _detect_resources_dir()
 DEFAULT_FFMPEG_PATH = os.path.join(RESOURCES_DIR, "bin", "ffmpeg.exe")
+
 
 @dataclass
 class UserState:
@@ -44,6 +47,7 @@ class UserState:
     email: Optional[str] = None
     display_name: str = ""
     minutes_left: int = 0
+
 
 # Global variables (would be better in a class)
 CONFIG = {}
@@ -54,9 +58,9 @@ MAIN_WINDOW = None
 class UpdateChecker(QtCore.QThread):
     update_available = QtCore.pyqtSignal(str, str)  # version, url
     error_occurred = QtCore.pyqtSignal(str)  # 错误信息
-    
+
     def run(self):
-        try:        
+        try:
             # 检查是否是本地文件URL
             if UPDATE_URL.startswith("file:///"):
                 # 读取本地文件
@@ -69,11 +73,11 @@ class UpdateChecker(QtCore.QThread):
                 response.raise_for_status()
                 # 解析JSON响应
                 data = response.json()
-                
+
             latest_version = data.get("version")
             download_url = data.get("url")
             update_notes = data.get("notes", "")
-            
+
             # 检查版本号
             if latest_version and version.parse(latest_version) > version.parse(CURRENT_VERSION):
                 self.update_available.emit(latest_version, download_url)
@@ -86,6 +90,7 @@ class UpdateChecker(QtCore.QThread):
         except Exception as e:
             # 其他错误
             self.error_occurred.emit(f"检查更新失败: {str(e)}")
+
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
@@ -103,31 +108,31 @@ class MainWindow(QtWidgets.QMainWindow):
         global API_CLIENT, MAIN_WINDOW
         API_CLIENT = self.api_client
         MAIN_WINDOW = self
-        
+
         self.setWindowTitle("NickSub Pro v1.0 - AI 视频翻译专家")
         self.resize(1100, 760)  # 修改为与nick.py一致的大小
-        
+
         # 设置窗口图标
         icon_path = os.path.join(os.path.dirname(__file__), "resources", "app_icon.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QtGui.QIcon(icon_path))
-        
+
         # Apply theme
         apply_business_theme(QtWidgets.QApplication.instance(), self.config.get("theme", "Light"))
-        
+
         # Setup UI
         self.setup_ui()
         self.setup_connections()
-        
+
         # Start update checker
         self.update_checker = UpdateChecker()
         self.update_checker.update_available.connect(self._on_update_available)
         self.update_checker.error_occurred.connect(self._on_update_error)
         self.update_checker.start()
-        
+
         # Connect API client to handle responses
         self.api_client.requestFinished.connect(self._on_api)
-        
+
         # Check if user is already logged in
         if not self.api_client.token:
             # If no token, show login dialog after a short delay
@@ -141,21 +146,21 @@ class MainWindow(QtWidgets.QMainWindow):
         central_widget = QtWidgets.QWidget()
         self.setCentralWidget(central_widget)
         layout = QtWidgets.QVBoxLayout(central_widget)
-        
+
         # Tab widget
         self.tab_widget = QtWidgets.QTabWidget()
         self.upload_page = UploadPage()
         self.download_page = DownloadPage(self.config.get("ffmpeg_path", ""))
         self.billing_page = BillingPage()
         self.settings_page = SettingsPage(self.config)
-        
+
         self.tab_widget.addTab(self.upload_page, "视频翻译")
         self.tab_widget.addTab(self.download_page, "视频下载")
         self.tab_widget.addTab(self.billing_page, "购买分钟")
         self.tab_widget.addTab(self.settings_page, "设置")
-        
+
         layout.addWidget(self.tab_widget)
-        
+
         toolbar = self.addToolBar("Main")
         toolbar.setMovable(False)
         self.login_action = QtWidgets.QAction("账户", self)
@@ -163,19 +168,19 @@ class MainWindow(QtWidgets.QMainWindow):
         toolbar.addAction(self.login_action)
         toolbar.addAction(self.logout_action)
         toolbar.addSeparator()
-        
+
         # 添加弹性空间，将状态信息推到最右边
         spacer = QtWidgets.QWidget()
         spacer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         toolbar.addWidget(spacer)
-        
+
         # 状态信息显示在最右边
         self.account_label = QtWidgets.QLabel("未登录")
         self.quota_label = QtWidgets.QLabel("分钟: —")
         toolbar.addWidget(self.account_label)
         toolbar.addSeparator()
         toolbar.addWidget(self.quota_label)
-        
+
         # 初始状态下显示退出登录按钮
         self.logout_action.setVisible(True)
 
@@ -183,14 +188,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # Toolbar actions
         self.login_action.triggered.connect(self._on_account)
         self.logout_action.triggered.connect(self._logout)
-        
+
         # Page signals
         self.upload_page.start_task.connect(self._start_translation_task)
         self.download_page.start_download.connect(self._start_download)
         self.download_page.sync_btn.clicked.connect(self._sync_cookies)
         self.billing_page.purchase_minutes.connect(self._purchase_minutes)
         self.settings_page.settings_changed.connect(self._on_settings_changed)
-        
+
         # Connect open location buttons
         self.upload_page.openVideoBtn.clicked.connect(self._open_video_location)
         self.upload_page.openSubsBtn.clicked.connect(self._open_subs_location)
@@ -217,14 +222,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.api_client.me()
 
     def _on_account(self):
-        if not self.api_client.token: 
+        if not self.api_client.token:
             self._login()
             return
         # 设置标志位，表示正在等待账户信息
         self._waiting_for_account_info = True
         # 从API获取最新的用户信息
         self.api_client.me()
-        
+
     def _show_account_dialog(self, ident, minutes_left):
         box = QtWidgets.QMessageBox(self)
         box.setWindowTitle("账户")
@@ -261,14 +266,14 @@ class MainWindow(QtWidgets.QMainWindow):
         msg_box.setIcon(QtWidgets.QMessageBox.Information)
         msg_box.setText(f"发现新版本 {latest_version}，您当前使用的是版本 {CURRENT_VERSION}。\n\n建议您更新到最新版本以获得更好的功能和体验。")
         msg_box.setDetailedText("点击'更新'按钮将打开下载页面，您可以下载最新版本。")
-        
+
         # 添加按钮
         update_btn = msg_box.addButton("更新", QtWidgets.QMessageBox.AcceptRole)
         later_btn = msg_box.addButton("稍后提醒", QtWidgets.QMessageBox.RejectRole)
         skip_btn = msg_box.addButton("跳过此版本", QtWidgets.QMessageBox.ActionRole)
-        
+
         msg_box.exec_()
-        
+
         clicked_btn = msg_box.clickedButton()
         if clicked_btn == update_btn:
             # 打开下载链接
@@ -287,46 +292,47 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _start_translation_task(self, params):
         # Implementation for starting translation task
-        
+
         # 检查是否有正在进行的任务
         if hasattr(self, '_busy') and self._busy:
             QtWidgets.QMessageBox.information(self, "任务进行中", "任务提交成功，请等待!")
             return
-            
+
         # 检查是否已登录
         if not self.api_client.token:
             QtWidgets.QMessageBox.information(self, "需要登录", "请先登录后再开始任务。")
             self._login()
             return
-            
+
         # 获取视频路径和所需分钟数
         video_path = params["video_path"]
         needed_minutes = self._probe_local_minutes(video_path)
-        
+
         if needed_minutes <= 0:
             QtWidgets.QMessageBox.warning(self, "无法获取时长", "未能读取视频时长，请检查设置。")
             return
-            
+
         # 检查用户余额
         user_minutes = getattr(self, '_current_user_info', {}).get("minutes_left", 0)
         if user_minutes < needed_minutes:
             QtWidgets.QMessageBox.information(self, "分钟不足", f"需 {needed_minutes} 分钟，余额 {user_minutes}。")
             return
-            
+
         # 设置任务参数
         params["needed_minutes"] = needed_minutes
         stem = os.path.splitext(os.path.basename(video_path))[0]
         unique_suffix = uuid.uuid4().hex[:8]
         params["unique_suffix"] = unique_suffix
-        audio_path = os.path.join(os.path.expanduser("~"), "Downloads", "DVP", "audio", f"{self._safe_filename(stem)}_{unique_suffix}.m4a")
-        
+        audio_path = os.path.join(os.path.expanduser("~"), "Downloads", "DVP", "audio",
+                                  f"{self._safe_filename(stem)}_{unique_suffix}.m4a")
+
         # 保存参数
         self._pipeline_params = params
         self._audio_out = audio_path
-        
+
         # 更新UI状态
         self.upload_page.setStep(f"开始：提取音频…（预计扣费 {needed_minutes} 分钟）")
-        
+
         # 检查FFmpeg路径
         ffmpeg_path = self.config.get("ffmpeg_path", "")
         # 如果配置中的路径为空或不存在，则使用默认路径
@@ -337,12 +343,12 @@ class MainWindow(QtWidgets.QMainWindow):
             if not os.path.exists(ffmpeg_path):
                 notify(self, f"未找到 FFmpeg: {ffmpeg_path}")
                 return
-            
+
         # 设置忙碌状态
         self._busy = True
         self.upload_page.startBtn.setEnabled(False)
         self.upload_page.videoBtn.setEnabled(False)
-        
+
         # 提取音频
         from core.workers import FFmpegAudioWorker
         self.audio_worker = FFmpegAudioWorker(ffmpeg_path)
@@ -357,8 +363,9 @@ class MainWindow(QtWidgets.QMainWindow):
             import os
             ffmpeg_path = self.config.get("ffmpeg_path", "")
             ffprobe_path = os.path.join(os.path.dirname(ffmpeg_path), "ffprobe.exe") if ffmpeg_path else "ffprobe"
-            
-            cmd = [ffprobe_path, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", video_path]
+
+            cmd = [ffprobe_path, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1",
+                   video_path]
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             duration = float(subprocess.check_output(cmd, startupinfo=si).strip())
@@ -395,12 +402,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.download_page.progress_bar.setValue(0)
         self.download_page.log_display.clear()
         self.download_page._log("准备开始下载...")
-        
+
         # 获取下载目录和FFmpeg路径
         import os
         DOWNLOAD_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "DVP")
         ffmpeg_path = self.config.get("ffmpeg_path", "")
-        
+
         # 创建下载工作线程
         from core.workers import VideoDownloadWorker
         self.download_worker = VideoDownloadWorker(url, DOWNLOAD_DIR, ffmpeg_path)
@@ -429,7 +436,7 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QMessageBox.critical(self, "下载错误", err_msg)
 
     def _purchase_minutes(self, amount: int):
-        if not self.api_client.token: 
+        if not self.api_client.token:
             notify(self, "请先登录再购买分钟")
             # 触发登录流程
             QtCore.QTimer.singleShot(100, self._login)
@@ -467,7 +474,7 @@ class MainWindow(QtWidgets.QMainWindow):
             email = data.get("email", "")
             ident = name or phone or email or "已登录"
             minutes_left = int(data.get("minutes_left", 0))
-            
+
             # 更新_current_user_info变量，以便_start_translation_task方法可以正确获取余额
             self._current_user_info = {
                 "name": name,
@@ -475,7 +482,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "email": email,
                 "minutes_left": minutes_left
             }
-            
+
             self.account_label.setText(ident)
             self.quota_label.setText(f"分钟: {minutes_left}")
             # 同时更新上传页面和计费页面的配额显示
@@ -490,7 +497,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     minutes_left=minutes_left
                 )
                 self.billing_page.set_user(user_state)
-                
+
             # 如果是在_on_account调用后获取信息，显示账户对话框
             if getattr(self, '_waiting_for_account_info', False):
                 self._waiting_for_account_info = False
@@ -499,11 +506,11 @@ class MainWindow(QtWidgets.QMainWindow):
             if "error" in data:
                 if data.get("code") == 404:
                     self._notfound_retries = getattr(self, "_notfound_retries", 0) + 1
-                    if self._notfound_retries <= 20: 
+                    if self._notfound_retries <= 20:
                         self.upload_page.setStep("登记中…")
                         return
                 self.upload_page.setStep(f"任务失败：{data.get('error')}")
-                if hasattr(self, "pollTimer"): 
+                if hasattr(self, "pollTimer"):
                     self.pollTimer.stop()
                 self._busy = False
                 self.upload_page.startBtn.setEnabled(True)
@@ -511,14 +518,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.upload_page.langSrc.setEnabled(True)
                 self.upload_page.langTgt.setEnabled(True)
                 return
-            
-            if hasattr(self, "_notfound_retries"): 
+
+            if hasattr(self, "_notfound_retries"):
                 self._notfound_retries = 0
-                
+
             status = data.get("status", "Queued")
             progress = int(data.get("progress", 0))
             msg = data.get("message")
-            
+
             if status == "Queued":
                 self.upload_page.setStep(msg or "排队中...")
             else:
@@ -527,18 +534,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
             urls = data.get("urls", {})
             jid = ctx.get("job_id") or self._current_job_id
-            
+
             if status in ("Done", "Error"):
                 if status == "Done":
                     if not getattr(self, "_completed_jobs", {}).get(jid):
-                        if not hasattr(self, "_completed_jobs"): 
+                        if not hasattr(self, "_completed_jobs"):
                             self._completed_jobs = {}
                         self._completed_jobs[jid] = True
                         self._download_results(jid, urls)
                         self.api_client.me()
                         QtCore.QTimer.singleShot(1500, lambda: self.api_client.me())
-                        
-                if hasattr(self, "pollTimer"): 
+
+                if hasattr(self, "pollTimer"):
                     self.pollTimer.stop()
                 self._busy = False
                 self.upload_page.startBtn.setEnabled(True)
@@ -560,36 +567,36 @@ class MainWindow(QtWidgets.QMainWindow):
             self.upload_page.langSrc.setEnabled(True)
             self.upload_page.langTgt.setEnabled(True)
             return
-            
+
         params = self._pipeline_params
         lang_src = params["lang_src"]
         lang_tgt = params["lang_tgt"]
         needed_minutes = params.get("needed_minutes", 0)
-        
+
         # 准备上传数据
         from PyQt5.QtCore import QFile, QUrl
         from PyQt5.QtNetwork import QHttpMultiPart, QHttpPart, QNetworkRequest
         import uuid
-        
+
         # 生成客户端任务ID
         client_job_id = str(uuid.uuid4())
-        
+
         # 创建multipart请求
         multi_part = QHttpMultiPart(QHttpMultiPart.FormDataType)
-        
+
         # 添加字段的辅助函数
         def add_field(name: str, value: str):
             part = QHttpPart()
             part.setHeader(QNetworkRequest.ContentDispositionHeader, f'form-data; name="{name}"')
             part.setBody(value.encode())
             multi_part.append(part)
-        
+
         # 添加必需的参数
         add_field("client_job_id", client_job_id)
         add_field("video_name", os.path.basename(params["video_path"]))
         add_field("lang_src", lang_src)
         add_field("lang_tgt", lang_tgt)
-        
+
         # 添加音频文件
         audio_file = QFile(audio_path)
         if not audio_file.open(QFile.ReadOnly):
@@ -600,9 +607,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.upload_page.langSrc.setEnabled(True)
             self.upload_page.langTgt.setEnabled(True)
             return
-            
+
         audio_part = QHttpPart()
-        audio_part.setHeader(QNetworkRequest.ContentDispositionHeader, f'form-data; name="audio"; filename="{os.path.basename(audio_path)}"')
+        audio_part.setHeader(QNetworkRequest.ContentDispositionHeader,
+                             f'form-data; name="audio"; filename="{os.path.basename(audio_path)}"')
         # 设置正确的MIME类型
         ext = os.path.splitext(audio_path)[1].lower()
         mime = "audio/mp4" if ext == ".m4a" else "application/octet-stream"
@@ -610,7 +618,7 @@ class MainWindow(QtWidgets.QMainWindow):
         audio_part.setBodyDevice(audio_file)
         audio_file.setParent(multi_part)  # 让multi_part拥有audio_file
         multi_part.append(audio_part)
-        
+
         # 发送请求
         url = QUrl(self.api_client.base_url + "/jobs")
         request = QNetworkRequest(url)
@@ -618,32 +626,32 @@ class MainWindow(QtWidgets.QMainWindow):
         request.setRawHeader(b"User-Agent", b"BiSubPro/1.0")
         if self.api_client.token:
             request.setRawHeader(b"Authorization", f"Bearer {self.api_client.token}".encode())
-            
+
         self._currentUploadReply = self.api_client.nam.post(request, multi_part)
         multi_part.setParent(self._currentUploadReply)  # 让reply拥有multi_part
-        
+
         # 保存任务ID
         self._pending_client_job_id = client_job_id
         self._current_job_id = None
-        
+
         self._currentUploadReply.uploadProgress.connect(
-            lambda sent, total: self.upload_page.setProgress(int(sent/total*50) if total > 0 else 0)
+            lambda sent, total: self.upload_page.setProgress(int(sent / total * 50) if total > 0 else 0)
         )
         self._currentUploadReply.finished.connect(lambda: self._on_upload_finished(self._currentUploadReply))
-        
+
         self.upload_page.setProgress(5)
         self.upload_page.setStep("正在上传音频…")
 
     def _on_upload_finished(self, reply):
         """处理上传完成的回调"""
         try:
-            if getattr(self, "_upload_file", None): 
+            if getattr(self, "_upload_file", None):
                 self._upload_file.close()
         except Exception:
             pass
         self._upload_file = None
         self._upload_mp = None
-        
+
         status = reply.attribute(QtNetwork.QNetworkRequest.HttpStatusCodeAttribute)
         if status and int(status) >= 400:
             self.upload_page.setStep(f"上传失败：HTTP {int(status)}")
@@ -654,24 +662,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self.upload_page.langTgt.setEnabled(True)
             reply.deleteLater()
             return
-            
+
         raw = reply.readAll().data()
         try:
             server = json.loads(raw) if raw else {}
         except Exception:
             server = {}
-            
+
         real_jid = server.get("job_id") or server.get("id") or server.get("server_job_id")
         if real_jid:
             self._current_job_id = real_jid
             self.upload_page.setStep("音频上传完成，任务已入队…")
         else:
             self.upload_page.setStep("音频上传完成，等待 ID…")
-            
+
         msg = server.get("message")
-        if msg: 
+        if msg:
             self.upload_page.setStep(msg)
-            
+
         if real_jid:
             self._pending_client_job_id = None
             self._poll_current()
@@ -684,50 +692,48 @@ class MainWindow(QtWidgets.QMainWindow):
     def _poll_current(self):
         """轮询任务状态"""
         jid = getattr(self, "_current_job_id", None)
-        if jid: 
+        if jid:
             self.api_client.get_job(jid)
-
-
 
     def _download_results(self, job_id: str, urls: Dict[str, str]):
         """下载翻译结果"""
-        if not hasattr(self, "_dl_handles"): 
+        if not hasattr(self, "_dl_handles"):
             self._dl_handles = []
-            
+
         video_src = (getattr(self, "_pipeline_params", {}) or {}).get("video_path", "")
         base_stem = os.path.splitext(os.path.basename(video_src))[0] or f"job_{job_id}"
         suffix = (getattr(self, "_pipeline_params", {}) or {}).get("unique_suffix", "")
-        
+
         # 处理文件名
         def with_suffix(stem: str) -> str:
             return f"{self._safe_filename(stem)}_{suffix}" if suffix else self._safe_filename(stem)
-            
+
         # 下载目录
         RESULT_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "DVP", "Result")
         SUB_RESULT_DIR = os.path.join(RESULT_DIR, "sub_result")
         VIDEO_RESULT_DIR = os.path.join(RESULT_DIR, "video_result")
-        
+
         os.makedirs(SUB_RESULT_DIR, exist_ok=True)
         os.makedirs(VIDEO_RESULT_DIR, exist_ok=True)
-        
+
         # 检查是否需要烧录字幕
         should_burn = (getattr(self, "_pipeline_params", {}) or {}).get("burn_subtitles", True)
-        
+
         from PyQt5.QtCore import QFile, QUrl
         from PyQt5.QtNetwork import QNetworkRequest
-        
+
         for key in ("srt", "ass", "video"):
             url = urls.get(key)
-            if not url: 
+            if not url:
                 continue
-                
+
             base = QUrl(self.api_client.base_url + "/")
             full = base.resolved(QUrl(url))
             req = QNetworkRequest(full)
-            if self.api_client.token: 
+            if self.api_client.token:
                 req.setRawHeader(b"Authorization", f"Bearer {self.api_client.token}".encode())
             reply = self.api_client.nam.get(req)
-            
+
             if key in ("srt", "ass"):
                 filename = f"{with_suffix(base_stem)}.{key}"
                 out_dir = SUB_RESULT_DIR
@@ -738,23 +744,23 @@ class MainWindow(QtWidgets.QMainWindow):
                 ext = os.path.splitext(url_name)[1].lower() or ".mp4"
                 filename = f"{with_suffix(base_stem)}{ext}"
                 out_dir = VIDEO_RESULT_DIR
-                
+
             out_path = os.path.join(out_dir, filename)
             f = QFile(out_path)
-            if not f.open(QFile.WriteOnly): 
+            if not f.open(QFile.WriteOnly):
                 reply.abort()
                 reply.deleteLater()
                 continue
-                
+
             self._dl_handles.append((reply, f))
-            
+
             def on_ready_read(r=reply, file=f):
                 file.write(r.readAll())
-                
+
             def on_finished(r=reply, file=f, p=out_path, k=key, all_urls=urls):
                 file.close()
                 notify(self, f"已下载 {os.path.basename(p)}")
-                
+
                 if k in ("srt", "ass"):
                     # 启用字幕按钮
                     self.upload_page.enableResultButtons(video_ok=False, subs_ok=True)
@@ -778,16 +784,16 @@ class MainWindow(QtWidgets.QMainWindow):
                             # User skipped burning: We are done.
                             self.upload_page.setProgress(100)
                             self.upload_page.setStep("任务完成 (仅生成字幕)")
-                            
+
                 try:
                     r.deleteLater()
                     self._dl_handles.remove((r, file))
                 except Exception:
                     pass
-                    
+
             reply.readyRead.connect(on_ready_read)
             reply.finished.connect(on_finished)
-            
+
         # 任务完成
         self.upload_page.setProgress(100)
         self.upload_page.setStep("任务全部完成！")
@@ -803,7 +809,7 @@ class MainWindow(QtWidgets.QMainWindow):
         RESULT_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "DVP", "Result")
         VIDEO_RESULT_DIR = os.path.join(RESULT_DIR, "video_result")
         os.makedirs(VIDEO_RESULT_DIR, exist_ok=True)
-        
+
         if platform.system() == "Windows":
             os.startfile(VIDEO_RESULT_DIR)
         elif platform.system() == "Darwin":  # macOS
@@ -818,15 +824,15 @@ class MainWindow(QtWidgets.QMainWindow):
         import uuid
         import time
         from PyQt5.QtCore import QProcess
-        
+
         # 确保必要的文件存在
-        if not video_in or not os.path.exists(video_in): 
+        if not video_in or not os.path.exists(video_in):
             self.upload_page.setStep("视频文件不存在")
             return
-        if not subs_path or not os.path.exists(subs_path): 
+        if not subs_path or not os.path.exists(subs_path):
             self.upload_page.setStep("字幕文件不存在")
             return
-            
+
         # 检查ffmpeg路径
         ffmpeg_path = getattr(self, 'ffmpeg_path', None)
         if not ffmpeg_path or not os.path.exists(ffmpeg_path):
@@ -876,7 +882,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except ImportError:
                 # 如果pysubs2不可用，直接使用原始字幕文件
                 return src_srt
-                
+
             subs = pysubs2.load(src_srt)
             subs.info["PlayResX"] = str(w)
             subs.info["PlayResY"] = str(h)
@@ -932,7 +938,7 @@ class MainWindow(QtWidgets.QMainWindow):
             RESULT_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "DVP", "Result")
             VIDEO_RESULT_DIR = os.path.join(RESULT_DIR, "video_result")
             os.makedirs(VIDEO_RESULT_DIR, exist_ok=True)
-            
+
             base_name = os.path.splitext(os.path.basename(src))[0]
             return os.path.join(VIDEO_RESULT_DIR, f"{base_name}_subtitled.mp4")
 
@@ -1051,7 +1057,7 @@ class MainWindow(QtWidgets.QMainWindow):
         RESULT_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "DVP", "Result")
         SUB_RESULT_DIR = os.path.join(RESULT_DIR, "sub_result")
         os.makedirs(SUB_RESULT_DIR, exist_ok=True)
-        
+
         if platform.system() == "Windows":
             os.startfile(SUB_RESULT_DIR)
         elif platform.system() == "Darwin":  # macOS
@@ -1063,6 +1069,7 @@ class MainWindow(QtWidgets.QMainWindow):
         save_config(self.config)
         event.accept()
 
+
 def main():
     app = QtWidgets.QApplication(sys.argv)
     # 设置应用程序图标
@@ -1072,6 +1079,7 @@ def main():
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
+
 
 if __name__ == "__main__":
     main()

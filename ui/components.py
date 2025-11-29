@@ -1,7 +1,9 @@
 from PyQt5 import QtCore, QtGui, QtWidgets
 
+
 class Toast(QtWidgets.QWidget):
     """A semi-transparent popup notification widget."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
@@ -30,10 +32,12 @@ class Toast(QtWidgets.QWidget):
         self.show()
         self.timer.start(duration)
 
+
 def notify(parent, message: str, duration: int = 2000):
     """Show a toast notification."""
     toast = Toast(parent)
     toast.show_message(message, duration)
+
 
 class LoginDialog(QtWidgets.QDialog):
     """Login dialog with phone/email switching and OTP verification."""
@@ -46,20 +50,40 @@ class LoginDialog(QtWidgets.QDialog):
         self.setWindowTitle("NickSub Pro v1.0 – 登录/注册")
         self.setModal(True)
         self.setFixedSize(460, 320)
-        
+
+        # 设置输入法策略
+        self.setAttribute(QtCore.Qt.WA_InputMethodEnabled, True)
+
         # 创建UI组件
         self.modePhone = QtWidgets.QRadioButton("手机号登录")
         self.modeEmail = QtWidgets.QRadioButton("邮箱登录")
-        self.modePhone.setChecked(True)
+        # 暂时不设置默认选中，避免在初始化过程中触发_toggle_mode
         self.phoneEdit = QtWidgets.QLineEdit()
         self.phoneEdit.setPlaceholderText("请输入手机号")
+        # 设置输入法策略
+        self.phoneEdit.setAttribute(QtCore.Qt.WA_InputMethodEnabled, True)
+        self.phoneEdit.setInputMethodHints(QtCore.Qt.ImhNone)
+        # 确保启用并可编辑
+        self.phoneEdit.setEnabled(True)
+        self.phoneEdit.setReadOnly(False)
+
         self.emailEdit = QtWidgets.QLineEdit()
         self.emailEdit.setPlaceholderText("请输入邮箱地址")
-        self.emailEdit.setVisible(False)
+        # 确保邮箱输入框启用并可编辑
+        self.emailEdit.setEnabled(True)
+        self.emailEdit.setReadOnly(False)
+        # 设置输入法策略
+        self.emailEdit.setAttribute(QtCore.Qt.WA_InputMethodEnabled, True)
+        self.emailEdit.setInputMethodHints(QtCore.Qt.ImhEmailCharactersOnly)
+
+        # 初始化堆叠布局索引
+        self.stack = None
+
         self.otpEdit = QtWidgets.QLineEdit()
         self.otpEdit.setPlaceholderText("验证码")
         self.otpEdit.setMaxLength(6)
         self.sendBtn = QtWidgets.QPushButton("发送验证码")
+        self.sendBtn.setEnabled(False)  # 默认禁用
         self.verifyBtn = QtWidgets.QPushButton("登录")
         self.verifyBtn.setEnabled(False)
         self.statusLab = QtWidgets.QLabel("")
@@ -67,19 +91,19 @@ class LoginDialog(QtWidgets.QDialog):
 
         # 布局设置
         modeLay = QtWidgets.QHBoxLayout()
-        modeLay.addWidget(self.modePhone)
         modeLay.addWidget(self.modeEmail)
+        modeLay.addWidget(self.modePhone)
         modeLay.addStretch(1)
-        
+
         form = QtWidgets.QFormLayout()
         form.addRow("登录方式", self._wrap(modeLay))
-        form.addRow("手机号/邮箱", self._wrap_two(self.phoneEdit, self.emailEdit))
+        form.addRow("邮箱/手机号", self._wrap_two(self.phoneEdit, self.emailEdit))
         form.addRow("验证码", self.otpEdit)
-        
+
         btns = QtWidgets.QHBoxLayout()
         btns.addWidget(self.sendBtn)
         btns.addWidget(self.verifyBtn)
-        
+
         lay = QtWidgets.QVBoxLayout(self)
         lay.addLayout(form)
         lay.addLayout(btns)
@@ -90,13 +114,20 @@ class LoginDialog(QtWidgets.QDialog):
         self.sendBtn.clicked.connect(self._send)
         self.verifyBtn.clicked.connect(self._verify)
         self.api.requestFinished.connect(self._on_api)
-        self.modePhone.toggled.connect(self._toggle_mode)
-        
+        self.modePhone.toggled.connect(lambda checked: self._toggle_mode(checked, True))
+        self.modeEmail.toggled.connect(lambda checked: self._toggle_mode(checked, False))
+        # 连接初始输入框事件
+        self.phoneEdit.textChanged.connect(self._on_input_changed)
+        self.emailEdit.textChanged.connect(self._on_input_changed)
+
         # 冷却计时器
         self._cooldown = 0
         self._timer = QtCore.QTimer(self)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._tick)
+
+        # 确保初始状态正确（在所有组件初始化完成后再设置默认选中状态）
+        self.modeEmail.setChecked(True)
 
     def _wrap(self, widget_or_layout):
         w = QtWidgets.QWidget()
@@ -115,13 +146,51 @@ class LoginDialog(QtWidgets.QDialog):
         self.stack = lay
         return w
 
-    def _toggle_mode(self, checked: bool):
-        is_phone = self.modePhone.isChecked()
-        self.phoneEdit.setVisible(is_phone)
-        self.emailEdit.setVisible(not is_phone)
-        self.stack.setCurrentIndex(0 if is_phone else 1)
+    def _toggle_mode(self, checked: bool, is_phone: bool = None):
+        # 只有在checked为True时才执行切换逻辑（避免重复执行）
+        if not checked:
+            return
+
+        # 如果没有传入is_phone参数，则根据sender确定当前切换的模式
+        if is_phone is None:
+            sender = self.sender()
+            is_phone = (sender == self.modePhone) if sender else self.modePhone.isChecked()
+
+        # 确保stack已初始化后再设置索引
+        if self.stack is not None:
+            self.stack.setCurrentIndex(0 if is_phone else 1)
+        else:
+            # 如果stack还未初始化，直接设置输入框可见性
+            self.phoneEdit.setVisible(is_phone)
+            self.emailEdit.setVisible(not is_phone)
+
         self.verifyBtn.setEnabled(False)
         self.statusLab.setText("")
+
+        # 确保当前可见的输入框能正常接收焦点并更新占位符文本
+        if is_phone:
+            # 使用singleShot延迟设置焦点，确保界面更新完成
+            QtCore.QTimer.singleShot(0, lambda: self.phoneEdit.setFocus())
+            # 确保手机号输入框启用并可编辑
+            self.phoneEdit.setEnabled(True)
+            self.phoneEdit.setReadOnly(False)
+            # 更新占位符文本
+            self.phoneEdit.setPlaceholderText("请输入手机号")
+        else:
+            # 使用singleShot延迟设置焦点，确保界面更新完成
+            QtCore.QTimer.singleShot(0, lambda: self.emailEdit.setFocus())
+            # 确保邮箱输入框启用并可编辑
+            self.emailEdit.setEnabled(True)
+            self.emailEdit.setReadOnly(False)
+            # 更新占位符文本
+            self.emailEdit.setPlaceholderText("请输入邮箱地址")
+            # 强制刷新邮箱输入框的状态
+            self.emailEdit.repaint()
+
+    def _on_input_changed(self, text):
+        # 当输入框有内容时启用发送验证码按钮
+        has_content = bool(text.strip())
+        self.sendBtn.setEnabled(has_content)
 
     def _tick(self):
         self._cooldown -= 1
@@ -141,9 +210,19 @@ class LoginDialog(QtWidgets.QDialog):
         is_phone = self.modePhone.isChecked()
         phone = self.phoneEdit.text().strip() if is_phone else None
         email = self.emailEdit.text().strip() if not is_phone else None
-        if not phone and not email:
-            self.statusLab.setText("请输入手机号或邮箱")
-            return
+
+        # 验证输入
+        if is_phone:
+            if not phone:
+                self.statusLab.setText("请输入手机号")
+                return
+            # 可以添加手机号格式验证
+        else:
+            if not email:
+                self.statusLab.setText("请输入邮箱地址")
+                return
+            # 可以添加邮箱格式验证
+
         self.api.login_send_otp(phone=phone, email=email)
 
     def _verify(self):
