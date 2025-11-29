@@ -5,6 +5,7 @@ import subprocess
 import pysubs2
 from PyQt5 import QtCore
 
+
 def probe_video_size(video_path: str, ffprobe_path: str) -> tuple[int, int]:
     """Probe video dimensions using ffprobe."""
     cmd = [
@@ -23,6 +24,7 @@ def probe_video_size(video_path: str, ffprobe_path: str) -> tuple[int, int]:
     except Exception:
         return 1920, 1080  # fallback
 
+
 def create_ass_style(subs: pysubs2.SSAFile, video_width: int, fontsize_factor: float = 0.045):
     """Create bilingual ASS styles based on video width."""
     fontsize = video_width * fontsize_factor
@@ -38,20 +40,22 @@ def create_ass_style(subs: pysubs2.SSAFile, video_width: int, fontsize_factor: f
     subs.styles["Chinese"].shadow = shadow
     subs.styles["Chinese"].outline = outline
 
+
 def convert_srt_to_ass(video_path: str, srt_path: str, ass_path: str, ffmpeg_path: str, ffprobe_path: str):
     """Convert SRT subtitles to styled ASS format."""
     width, height = probe_video_size(video_path, ffprobe_path)
-    
+
     subs = pysubs2.load(srt_path, encoding="utf-8")
     create_ass_style(subs, width)
-    
+
     # Apply styles to events
     for line in subs.events:
         if "[zh]" in line.text:
             line.style = "Chinese"
-    
+
     subs.styles["Default"].fontsize = width * 0.045
     subs.save(ass_path)
+
 
 class SubtitleEmbedder(QtCore.QObject):
     """Handles subtitle embedding using FFmpeg."""
@@ -74,16 +78,16 @@ class SubtitleEmbedder(QtCore.QObject):
         """Start embedding subtitles into video."""
         self._input_video = video_path
         self._output_video = output_path
-        
+
         # Convert SRT to ASS
         ass_path = srt_path.replace(".srt", ".ass")
         convert_srt_to_ass(video_path, srt_path, ass_path, self.ffmpeg_path, self.ffprobe_path)
-        
+
         # Prepare FFmpeg command
         drawbox_filter = "drawbox=y=ih-h:w=iw:h=ih/6:t=max:color=black@0.7"
         ass_filter = f"ass={ass_path.replace(os.sep, '/')}"
         filter_complex = f"{drawbox_filter},{ass_filter}"
-        
+
         cmd = [
             self.ffmpeg_path,
             "-y",
@@ -95,7 +99,7 @@ class SubtitleEmbedder(QtCore.QObject):
             "-c:a", "copy",
             output_path
         ]
-        
+
         self.proc.start(" ".join(cmd))
 
     def _on_output(self):
@@ -103,14 +107,14 @@ class SubtitleEmbedder(QtCore.QObject):
         output = self.proc.readAllStandardOutput().data().decode("utf-8", errors="ignore")
         duration_match = re.search(r"Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})", output)
         time_match = re.search(r"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})", output)
-        
+
         if duration_match and time_match:
             h, m, s = map(float, duration_match.groups())
             duration_sec = h * 3600 + m * 60 + s
-            
+
             h, m, s = map(float, time_match.groups())
             current_sec = h * 3600 + m * 60 + s
-            
+
             progress = int((current_sec / duration_sec) * 100)
             self.progress.emit(min(progress, 99))
 

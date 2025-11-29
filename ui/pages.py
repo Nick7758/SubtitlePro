@@ -5,6 +5,7 @@ import time
 import os
 from config.settings import ASR_DICT, TRANS_DICT
 
+
 class UploadPage(QtWidgets.QWidget):
     """Video upload and translation page."""
     start_task = QtCore.pyqtSignal(dict)
@@ -110,7 +111,7 @@ class UploadPage(QtWidgets.QWidget):
         self._reset_run_ui("开始任务…")
         self.langSrc.setEnabled(False)
         self.langTgt.setEnabled(False)
-        
+
         vp = self.videoPath.text().strip()
         if not vp or not os.path.exists(vp):
             self._log("请选择有效视频文件")
@@ -151,6 +152,7 @@ class UploadPage(QtWidgets.QWidget):
         self.openVideoBtn.setEnabled(video_ok)
         self.openSubsBtn.setEnabled(subs_ok)
 
+
 class DownloadPage(QtWidgets.QWidget):
     """Video download page."""
     start_download = QtCore.pyqtSignal(str)
@@ -169,12 +171,12 @@ class DownloadPage(QtWidgets.QWidget):
 
         # Cookie状态标签
         self.cookie_label = QtWidgets.QLabel()
-        
+
         # 同步和删除按钮
         self.sync_btn = QtWidgets.QPushButton("一键导入登录(youtube)")
         self.sync_btn.setObjectName("flatBtn")
         self.sync_btn.setToolTip("依次尝试从 Edge, Firefox 提取登录信息")
-        
+
         self.delete_btn = QtWidgets.QPushButton("删除")
         self.delete_btn.setObjectName("dangerBtn")
         self.delete_btn.setMaximumWidth(60)
@@ -185,11 +187,11 @@ class DownloadPage(QtWidgets.QWidget):
         self.progress_bar = QtWidgets.QProgressBar()
         self.progress_bar.setValue(0)
         self.status_label = QtWidgets.QLabel("就绪")
-        
+
         # 日志显示区域
         self.log_display = QtWidgets.QTextEdit()
         self.log_display.setReadOnly(True)
-        
+
         # 打开目录按钮
         self.open_folder_btn = QtWidgets.QPushButton("打开下载目录")
         self.open_folder_btn.setObjectName("flatBtn")
@@ -198,21 +200,21 @@ class DownloadPage(QtWidgets.QWidget):
         # 布局设置
         form_layout = QtWidgets.QFormLayout()
         form_layout.addRow("视频链接", self.url_input)
-        
+
         # Cookie状态布局
         cookie_layout = QtWidgets.QHBoxLayout()
         cookie_layout.addWidget(self.cookie_label)
         cookie_layout.addStretch(1)
         cookie_layout.addWidget(self.sync_btn)
         cookie_layout.addWidget(self.delete_btn)
-        
+
         cookie_box = QtWidgets.QGroupBox("登录证书 ")
         cookie_box.setLayout(cookie_layout)
-        
+
         # 按钮布局
         button_layout = QtWidgets.QHBoxLayout()
         button_layout.addWidget(self.download_btn)
-        
+
         result_button_layout = QtWidgets.QHBoxLayout()
         result_button_layout.addWidget(self.open_folder_btn)
         result_button_layout.addStretch(1)
@@ -226,7 +228,7 @@ class DownloadPage(QtWidgets.QWidget):
         layout.addWidget(self.status_label)
         layout.addWidget(self.log_display)
         layout.addLayout(result_button_layout)
-        
+
         # 初始化Cookie状态
         self._refresh_cookie_status()
 
@@ -288,6 +290,7 @@ class DownloadPage(QtWidgets.QWidget):
         """设置进度条值"""
         self.progress_bar.setValue(value)
 
+
 class BillingPage(QtWidgets.QWidget):
     """Billing and minutes purchase page."""
     purchase_minutes = QtCore.pyqtSignal(int)
@@ -298,7 +301,7 @@ class BillingPage(QtWidgets.QWidget):
 
     def setup_ui(self):
         self.balance_label = QtWidgets.QLabel("剩余分钟数: --")
-        
+
         # 创建购买分钟数组件
         purchase_group = QtWidgets.QGroupBox("购买分钟")
         self.minutes_spin = QtWidgets.QSpinBox()
@@ -307,30 +310,31 @@ class BillingPage(QtWidgets.QWidget):
         self.minutes_spin.setValue(60)
         self.purchase_btn = QtWidgets.QPushButton("购买分钟")
         self.purchase_btn.clicked.connect(self._purchase)
-        
+
         # 使用QFormLayout排列购买分钟数相关控件
         form_layout = QtWidgets.QFormLayout(purchase_group)
         form_layout.addRow("分钟数", self.minutes_spin)
         form_layout.addRow(self.purchase_btn)
-        
+
         # 创建主布局
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.balance_label)
         layout.addWidget(purchase_group)
-        
+
         # 添加stretch将控件推到顶部
         layout.addStretch(1)
 
     def _purchase(self):
         minutes = self.minutes_spin.value()
         self.purchase_minutes.emit(minutes)
-        
+
     def set_user(self, user):
         """设置用户信息并更新余额显示"""
         if user is None:
             self.balance_label.setText("剩余分钟数: --")
         else:
             self.balance_label.setText(f"剩余分钟数: {user.minutes_left}")
+
 
 class SettingsPage(QtWidgets.QWidget):
     """Application settings page."""
@@ -344,28 +348,33 @@ class SettingsPage(QtWidgets.QWidget):
     def setup_ui(self):
         self.ffmpeg_input = QtWidgets.QLineEdit()
         self.ffmpeg_input.setText(self.config.get("ffmpeg_path", ""))
-        
+
         self.workdir_input = QtWidgets.QLineEdit()
         self.workdir_input.setText(self.config.get("work_dir", ""))
-        
+
         self.theme_combo = QtWidgets.QComboBox()
         self.theme_combo.addItems(["Light", "Dark"])
-        
+
         # 使用QFormLayout
         form = QtWidgets.QFormLayout()
         form.addRow("FFmpeg 路径:", self.ffmpeg_input)
         form.addRow("工作目录:", self.workdir_input)
         form.addRow("主题:", self.theme_combo)
-        
+
         # 创建主布局
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(form)
-        
+
+        # 恢复更新提醒按钮
+        self.reset_update_btn = QtWidgets.QPushButton("恢复更新提醒")
+        self.reset_update_btn.clicked.connect(self._reset_update_reminder)
+        layout.addWidget(self.reset_update_btn)
+
         # 保存按钮
         self.save_btn = QtWidgets.QPushButton("保存设置")
         self.save_btn.clicked.connect(self._save_settings)
         layout.addWidget(self.save_btn)
-        
+
         # 添加stretch将控件推到顶部
         layout.addStretch(1)
 
@@ -385,3 +394,12 @@ class SettingsPage(QtWidgets.QWidget):
         self.config["ffmpeg_path"] = self.ffmpeg_input.text()
         self.config["work_dir"] = self.workdir_input.text()
         self.settings_changed.emit()
+
+    def _reset_update_reminder(self):
+        """恢复更新提醒"""
+        # 清除跳过的版本记录
+        if "skipped_version" in self.config:
+            del self.config["skipped_version"]
+            QtWidgets.QMessageBox.information(self, "成功", "已恢复更新提醒功能。")
+        else:
+            QtWidgets.QMessageBox.information(self, "提示", "暂无跳过的版本。")

@@ -8,6 +8,8 @@ from typing import Dict, Optional
 from dataclasses import dataclass
 from packaging import version  # 需要运行: pip install packaging
 from PyQt5 import QtCore, QtGui, QtWidgets, QtNetwork
+from PyQt5.QtGui import QDesktopServices
+from PyQt5.QtCore import QUrl
 from config.settings import load_config, save_config, DEFAULT_API_BASE, CURRENT_VERSION, UPDATE_URL
 from config.theme import apply_business_theme
 from core.api_client import ApiClient
@@ -75,12 +77,19 @@ class UpdateChecker(QtCore.QThread):
                 data = response.json()
 
             latest_version = data.get("version")
-            download_url = data.get("url")
-            update_notes = data.get("notes", "")
+            download_url = data.get("download_url")  # 修正字段名
+            update_notes = data.get("message", "")  # 修正字段名
 
             # 检查版本号
             if latest_version and version.parse(latest_version) > version.parse(CURRENT_VERSION):
-                self.update_available.emit(latest_version, download_url)
+                # 检查是否跳过了此版本
+                from config.settings import load_config
+                config = load_config()
+                skipped_version = config.get("skipped_version")
+
+                # 如果没有跳过此版本或跳过的版本不同，则发出更新信号
+                if skipped_version != latest_version:
+                    self.update_available.emit(latest_version, download_url)
         except FileNotFoundError as e:
             # 文件未找到错误
             self.error_occurred.emit(f"检查更新失败: 本地版本文件未找到 ({str(e)})")
@@ -90,6 +99,47 @@ class UpdateChecker(QtCore.QThread):
         except Exception as e:
             # 其他错误
             self.error_occurred.emit(f"检查更新失败: {str(e)}")
+
+    def download_update(self, download_url, progress_callback=None):
+        """下载更新文件"""
+        try:
+            # 获取下载目录
+            from config.settings import DOWNLOAD_DIR
+            os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+            # 从URL中提取文件名
+            filename = download_url.split("/")[-1]
+            filepath = os.path.join(DOWNLOAD_DIR, filename)
+
+            # 下载文件
+            response = requests.get(download_url, stream=True)
+            response.raise_for_status()
+
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded_size = 0
+
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded_size += len(chunk)
+                        if progress_callback and total_size > 0:
+                            progress = int((downloaded_size / total_size) * 100)
+                            # 检查是否应该取消下载
+                            result = progress_callback(progress)
+                            # 如果回调返回False，则取消下载
+                            if result is False:
+                                # 清理已下载的文件
+                                if os.path.exists(filepath):
+                                    try:
+                                        os.remove(filepath)
+                                    except:
+                                        pass
+                                raise Exception("下载已被用户取消")
+
+            return filepath
+        except Exception as e:
+            raise Exception(f"下载更新失败: {str(e)}")
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -264,8 +314,8 @@ class MainWindow(QtWidgets.QMainWindow):
         msg_box = QtWidgets.QMessageBox(self)
         msg_box.setWindowTitle("发现新版本")
         msg_box.setIcon(QtWidgets.QMessageBox.Information)
-        msg_box.setText(f"发现新版本 {latest_version}，您当前使用的是版本 {CURRENT_VERSION}。\n\n建议您更新到最新版本以获得更好的功能和体验。")
-        msg_box.setDetailedText("点击'更新'按钮将打开下载页面，您可以下载最新版本。")
+        msg_box.setText(
+            f"发现新版本 {latest_version}，您当前使用的是版本 {CURRENT_VERSION}。\n\n建议您更新到最新版本以获得更好的功能和体验。\n\n点击'更新'按钮将自动下载并安装最新版本。")
 
         # 添加按钮
         update_btn = msg_box.addButton("更新", QtWidgets.QMessageBox.AcceptRole)
@@ -276,12 +326,130 @@ class MainWindow(QtWidgets.QMainWindow):
 
         clicked_btn = msg_box.clickedButton()
         if clicked_btn == update_btn:
-            # 打开下载链接
-            webbrowser.open(download_url)
+            # 自动下载并安装更新
+            if download_url:
+                self._download_and_install_update(latest_version, download_url)
+            else:
+                QtWidgets.QMessageBox.warning(self, "下载链接无效", "未能获取有效的下载链接，请稍后重试或手动访问官网下载。")
         elif clicked_btn == skip_btn:
-            # 这里可以实现跳过版本的逻辑，比如保存到配置文件中
-            pass
+            # 保存跳过的版本号到配置文件中
+            self.config["skipped_version"] = latest_version
+            save_config(self.config)
+            notify(self, f"已跳过版本 {latest_version}，将不会再次提醒。")
         # 如果点击"稍后提醒"则不执行任何操作
+
+    def _download_and_install_update(self, latest_version, download_url):
+        """下载并安装更新"""
+        # 创建进度对话框
+        progress_dialog = QtWidgets.QProgressDialog("正在下载更新...", "取消", 0, 100, self)
+        progress_dialog.resize(400, 100)  # 设置宽度为400，高度为100
+        progress_dialog.setWindowModality(QtCore.Qt.WindowModal)
+        progress_dialog.setWindowTitle("下载更新")
+        progress_dialog.show()
+
+        # 在单独的线程中下载更新
+        def download_progress(progress):
+            # 检查用户是否取消了下载
+            if progress_dialog.wasCanceled():
+                # 返回False表示取消下载
+                return False
+            progress_dialog.setValue(progress)
+            # 返回True表示继续下载
+            return True
+
+        def download_finished(filepath):
+            # 检查用户是否取消了下载
+            if progress_dialog.wasCanceled():
+                # 清理已下载的文件
+                if os.path.exists(filepath):
+                    try:
+                        os.remove(filepath)
+                    except:
+                        pass
+                return
+
+            progress_dialog.close()
+            # 询问用户是否立即安装更新
+            # 创建自定义按钮文本的消息框
+            reply_box = QtWidgets.QMessageBox(self)
+            reply_box.resize(400, 100)
+            reply_box.setWindowTitle("下载完成")
+            reply_box.setText(f"新版本 {latest_version} 已下载完成，是否立即安装？\n\n注意：安装过程将关闭当前应用程序。")
+            yes_button = reply_box.addButton("是", QtWidgets.QMessageBox.YesRole)
+            no_button = reply_box.addButton("否", QtWidgets.QMessageBox.NoRole)
+            reply_box.setDefaultButton(yes_button)
+            reply_box.exec_()
+            reply = QtWidgets.QMessageBox.Yes if reply_box.clickedButton() == yes_button else QtWidgets.QMessageBox.No
+
+            if reply == QtWidgets.QMessageBox.Yes:
+                # 关闭应用程序并启动安装程序
+                self._install_update(filepath)
+
+        def download_error(error_msg):
+            progress_dialog.close()
+            # 只有在不是用户取消的情况下才显示错误消息
+            if not progress_dialog.wasCanceled():
+                QtWidgets.QMessageBox.critical(self, "下载失败", f"更新下载失败：{error_msg}")
+
+        # 启动下载
+        from PyQt5.QtCore import QThread, pyqtSignal
+
+        class DownloadThread(QThread):
+            progress = pyqtSignal(int)
+            finished = pyqtSignal(str)
+            error = pyqtSignal(str)
+
+            def __init__(self, update_checker, download_url):
+                super().__init__()
+                self.update_checker = update_checker
+                self.download_url = download_url
+                self._canceled = False
+
+            def cancel(self):
+                """取消下载"""
+                self._canceled = True
+
+            def run(self):
+                try:
+                    # 修改download_update方法以支持进度回调中检查取消状态
+                    filepath = self.update_checker.download_update(
+                        self.download_url,
+                        lambda p: self.progress.emit(p) if not self._canceled else None
+                    )
+                    if not self._canceled:
+                        self.finished.emit(filepath)
+                    else:
+                        # 清理已下载的文件
+                        if os.path.exists(filepath):
+                            try:
+                                os.remove(filepath)
+                            except:
+                                pass
+                except Exception as e:
+                    if not self._canceled:
+                        self.error.emit(str(e))
+
+        # 创建并启动下载线程
+        self.download_thread = DownloadThread(self.update_checker, download_url)
+        self.download_thread.progress.connect(download_progress)
+        self.download_thread.finished.connect(download_finished)
+        self.download_thread.error.connect(download_error)
+
+        # 连接取消信号
+        progress_dialog.canceled.connect(self.download_thread.cancel)
+
+        self.download_thread.start()
+
+    def _install_update(self, installer_path):
+        """安装更新"""
+        try:
+            # 在Windows上启动安装程序并关闭当前应用
+            import subprocess
+            subprocess.Popen([installer_path])
+            # 关闭当前应用程序
+            self.close()
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "安装失败", f"无法启动安装程序：{str(e)}")
 
     def _on_update_error(self, error_message):
         """处理更新检查错误"""
@@ -449,10 +617,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # Save config and apply changes
         save_config(self.config)
         notify(self, "设置已保存")
-
-    def _on_update_available(self, version, url):
-        # Show update dialog
-        pass
 
     def _on_api(self, ctx: dict, data: dict):
         op = ctx.get("op")

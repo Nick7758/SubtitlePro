@@ -6,6 +6,7 @@ import yt_dlp
 from PyQt5 import QtCore
 from config.settings import WORK_DIR
 
+
 class FFmpegAudioWorker(QtCore.QObject):
     finished = QtCore.pyqtSignal(str, str)
     error = QtCore.pyqtSignal(str, str)
@@ -24,17 +25,17 @@ class FFmpegAudioWorker(QtCore.QObject):
     def extract(self, video_path: str, audio_path: str):
         self._video = video_path
         self._audio = audio_path
-        
+
         # 检查FFmpeg路径是否存在
         if not os.path.exists(self.ffmpeg_path):
             self.error.emit(self._video or "", f"FFmpeg未找到: {self.ffmpeg_path}")
             return
-            
+
         # 检查视频文件是否存在
         if not os.path.exists(video_path):
             self.error.emit(self._video or "", f"视频文件不存在: {video_path}")
             return
-            
+
         # 确保输出目录存在
         audio_dir = os.path.dirname(audio_path)
         if not os.path.exists(audio_dir):
@@ -43,15 +44,15 @@ class FFmpegAudioWorker(QtCore.QObject):
             except Exception as e:
                 self.error.emit(self._video or "", f"无法创建音频目录: {audio_dir} ({str(e)})")
                 return
-                
+
         # 尝试删除已存在的音频文件
         try:
-            if os.path.exists(audio_path): 
+            if os.path.exists(audio_path):
                 os.remove(audio_path)
         except Exception as e:
             self.error.emit(self._video or "", f"无法删除现有音频文件: {audio_path} ({str(e)})")
             return
-            
+
         args = ["-y", "-i", video_path, "-vn", "-acodec", "aac", "-ar", "16000", "-ac", "1", audio_path]
         self.proc.start(self.ffmpeg_path, args)
 
@@ -72,6 +73,7 @@ class FFmpegAudioWorker(QtCore.QObject):
             elif code == 2:
                 error_msg += " (参数错误)"
             self.error.emit(self._video or "", error_msg)
+
 
 class CookieGeneratorWorker(QtCore.QThread):
     """
@@ -151,6 +153,7 @@ class CookieGeneratorWorker(QtCore.QThread):
             detail = "\n".join(errors)
             self.finished.emit(False,
                                f"同步失败。\n请确保您在 Chrome/Edge/Firefox 上已登录 YouTube。\n注意：程序必须关闭浏览器才能读取数据。\n\n调试信息:\n{detail}")
+
 
 class VideoDownloadWorker(QtCore.QThread):
     """Runs yt-dlp in a background thread with Audio/Video merge protection."""
