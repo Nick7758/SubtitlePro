@@ -216,14 +216,48 @@ class LoginDialog(QtWidgets.QDialog):
             if not phone:
                 self.statusLab.setText("请输入手机号")
                 return
-            # 可以添加手机号格式验证
+            # 手机号格式验证
+            if not self._is_valid_phone(phone):
+                self.statusLab.setText("手机号格式不正确")
+                return
         else:
             if not email:
                 self.statusLab.setText("请输入邮箱地址")
                 return
-            # 可以添加邮箱格式验证
+            # 邮箱格式验证
+            if not self._is_valid_email(email):
+                self.statusLab.setText("邮箱格式不正确")
+                return
 
         self.api.login_send_otp(phone=phone, email=email)
+
+    def _is_valid_phone(self, phone):
+        """验证手机号格式是否正确"""
+        import re
+        # 中国手机号格式验证（11位数字，以1开头，第二位为3-9）
+        pattern = r'^1[3-9]\d{9}$'
+        return re.match(pattern, phone) is not None
+
+    def _is_valid_email(self, email):
+        """验证邮箱格式是否正确"""
+        import re
+        # 更严格的邮箱格式验证
+        # 要求域名后缀至少有2个字符，且只包含字母
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(pattern, email):
+            return False
+
+        # 获取域名后缀
+        domain_suffix = email.split('.')[-1]
+        # 域名后缀只能包含字母
+        if not domain_suffix.isalpha():
+            return False
+
+        # 域名后缀长度应该在2-10个字符之间（常见域名后缀）
+        if len(domain_suffix) < 2 or len(domain_suffix) > 10:
+            return False
+
+        return True
 
     def _verify(self):
         code = self.otpEdit.text().strip()

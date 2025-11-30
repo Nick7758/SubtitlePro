@@ -3,7 +3,8 @@ from core.workers import VideoDownloadWorker
 from typing import Optional
 import time
 import os
-from config.settings import ASR_DICT, TRANS_DICT
+from config.settings import ASR_DICT, TRANS_DICT, DOWNLOAD_VIDEO_DIR
+import platform
 
 
 class UploadPage(QtWidgets.QWidget):
@@ -271,15 +272,12 @@ class DownloadPage(QtWidgets.QWidget):
 
     def _open_download_dir(self):
         """打开下载目录"""
-        import os
-        import platform
-        download_dir = os.path.join(os.path.expanduser("~"), "Downloads", "DVP")
         if platform.system() == "Windows":
-            os.startfile(download_dir)
+            os.startfile(DOWNLOAD_VIDEO_DIR)
         elif platform.system() == "Darwin":  # macOS
-            os.system(f"open '{download_dir}'")
+            os.system(f"open '{DOWNLOAD_VIDEO_DIR}'")
         else:  # Linux
-            os.system(f"xdg-open '{download_dir}'")
+            os.system(f"xdg-open '{DOWNLOAD_VIDEO_DIR}'")
 
     def _log(self, text: str):
         """添加日志信息"""
@@ -365,15 +363,15 @@ class SettingsPage(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(form)
 
-        # 恢复更新提醒按钮
-        self.reset_update_btn = QtWidgets.QPushButton("恢复更新提醒")
-        self.reset_update_btn.clicked.connect(self._reset_update_reminder)
-        layout.addWidget(self.reset_update_btn)
-
         # 保存按钮
         self.save_btn = QtWidgets.QPushButton("保存设置")
         self.save_btn.clicked.connect(self._save_settings)
         layout.addWidget(self.save_btn)
+
+        # 恢复更新提醒按钮
+        self.reset_update_btn = QtWidgets.QPushButton("恢复更新提醒")
+        self.reset_update_btn.clicked.connect(self._reset_update_reminder)
+        layout.addWidget(self.reset_update_btn)
 
         # 添加stretch将控件推到顶部
         layout.addStretch(1)

@@ -4,13 +4,15 @@ import json
 import uuid
 import requests
 import webbrowser
+from core.workers import VideoDownloadWorker
 from typing import Dict, Optional
 from dataclasses import dataclass
 from packaging import version  # 需要运行: pip install packaging
 from PyQt5 import QtCore, QtGui, QtWidgets, QtNetwork
 from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtCore import QUrl
-from config.settings import load_config, save_config, DEFAULT_API_BASE, CURRENT_VERSION, UPDATE_URL
+from config.settings import load_config, save_config, DEFAULT_API_BASE, CURRENT_VERSION, UPDATE_URL, DOWNLOAD_VIDEO_DIR, \
+    DOWNLOAD_DIR
 from config.theme import apply_business_theme
 from core.api_client import ApiClient
 from ui.components import LoginDialog, notify
@@ -104,7 +106,6 @@ class UpdateChecker(QtCore.QThread):
         """下载更新文件"""
         try:
             # 获取下载目录
-            from config.settings import DOWNLOAD_DIR
             os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
             # 从URL中提取文件名
@@ -345,6 +346,8 @@ class MainWindow(QtWidgets.QMainWindow):
         progress_dialog.resize(400, 100)  # 设置宽度为400，高度为100
         progress_dialog.setWindowModality(QtCore.Qt.WindowModal)
         progress_dialog.setWindowTitle("下载更新")
+        # 去除问号图标
+        progress_dialog.setWindowFlags(progress_dialog.windowFlags() & ~QtCore.Qt.WindowContextHelpButtonHint)
         progress_dialog.show()
 
         # 在单独的线程中下载更新
@@ -491,8 +494,8 @@ class MainWindow(QtWidgets.QMainWindow):
         stem = os.path.splitext(os.path.basename(video_path))[0]
         unique_suffix = uuid.uuid4().hex[:8]
         params["unique_suffix"] = unique_suffix
-        audio_path = os.path.join(os.path.expanduser("~"), "Downloads", "DVP", "audio",
-                                  f"{self._safe_filename(stem)}_{unique_suffix}.m4a")
+        from config.settings import AUDIO_DIR
+        audio_path = os.path.join(AUDIO_DIR, f"{self._safe_filename(stem)}_{unique_suffix}.m4a")
 
         # 保存参数
         self._pipeline_params = params
@@ -564,21 +567,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.upload_page.langTgt.setEnabled(True)
 
     def _start_download(self, url):
-        # Implementation for starting download
-        # 与nick.py保持一致的实现
+
         self.download_page.download_btn.setEnabled(False)
         self.download_page.progress_bar.setValue(0)
         self.download_page.log_display.clear()
         self.download_page._log("准备开始下载...")
 
-        # 获取下载目录和FFmpeg路径
-        import os
-        DOWNLOAD_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "DVP")
         ffmpeg_path = self.config.get("ffmpeg_path", "")
 
-        # 创建下载工作线程
-        from core.workers import VideoDownloadWorker
-        self.download_worker = VideoDownloadWorker(url, DOWNLOAD_DIR, ffmpeg_path)
+        self.download_worker = VideoDownloadWorker(url, DOWNLOAD_VIDEO_DIR, ffmpeg_path)
         self.download_worker.progress.connect(self.download_page.set_progress)
         self.download_worker.log.connect(self.download_page._log)
         self.download_worker.finished.connect(self._on_download_finished)
@@ -873,9 +870,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return f"{self._safe_filename(stem)}_{suffix}" if suffix else self._safe_filename(stem)
 
         # 下载目录
-        RESULT_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "DVP", "Result")
-        SUB_RESULT_DIR = os.path.join(RESULT_DIR, "sub_result")
-        VIDEO_RESULT_DIR = os.path.join(RESULT_DIR, "video_result")
+        from config.settings import RESULT_DIR, SUB_RESULT_DIR, VIDEO_RESULT_DIR
 
         os.makedirs(SUB_RESULT_DIR, exist_ok=True)
         os.makedirs(VIDEO_RESULT_DIR, exist_ok=True)
@@ -970,8 +965,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _open_video_location(self):
         """打开视频结果目录"""
         import platform
-        RESULT_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "DVP", "Result")
-        VIDEO_RESULT_DIR = os.path.join(RESULT_DIR, "video_result")
+        from config.settings import VIDEO_RESULT_DIR
         os.makedirs(VIDEO_RESULT_DIR, exist_ok=True)
 
         if platform.system() == "Windows":
@@ -1099,8 +1093,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- EXECUTION ---
         def _video_output_path_for(src: str) -> str:
             """生成输出视频路径"""
-            RESULT_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "DVP", "Result")
-            VIDEO_RESULT_DIR = os.path.join(RESULT_DIR, "video_result")
+            from config.settings import VIDEO_RESULT_DIR
             os.makedirs(VIDEO_RESULT_DIR, exist_ok=True)
 
             base_name = os.path.splitext(os.path.basename(src))[0]
@@ -1218,8 +1211,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _open_subs_location(self):
         """打开字幕结果目录"""
         import platform
-        RESULT_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "DVP", "Result")
-        SUB_RESULT_DIR = os.path.join(RESULT_DIR, "sub_result")
+        from config.settings import SUB_RESULT_DIR
         os.makedirs(SUB_RESULT_DIR, exist_ok=True)
 
         if platform.system() == "Windows":
