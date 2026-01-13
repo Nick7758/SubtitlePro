@@ -405,10 +405,6 @@ class SubtitleEditorPage(QtWidgets.QWidget):
         # 状态标签（初始为空）
         self.status_label = QtWidgets.QLabel("")
         
-        # 初始隐藏表格和选项区域（只显示文件选择）
-        self.table.setVisible(False)
-        self.options_widget.setVisible(False)
-        
         # 主布局
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(file_layout)
@@ -441,10 +437,6 @@ class SubtitleEditorPage(QtWidgets.QWidget):
             # 更新表格
             self._update_table()
             
-            # 显示表格和选项区域（首次加载后显示）
-            self.table.setVisible(True)
-            self.options_widget.setVisible(True)
-            
             # 根据加载的格式设置保存格式下拉框
             format_index = self.format_combo.findData(self.current_format)
             if format_index >= 0:
@@ -456,9 +448,6 @@ class SubtitleEditorPage(QtWidgets.QWidget):
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "加载失败", f"无法加载字幕文件:\n{str(e)}")
             self.status_label.setText("加载失败")
-            # 加载失败时隐藏表格和选项区域
-            self.table.setVisible(False)
-            self.options_widget.setVisible(False)
     
     def _update_table(self):
         """更新表格显示"""
