@@ -63,6 +63,87 @@ def swap_chinese_english(subtitles: List[srt.Subtitle], chinese_up: bool) -> Lis
     return swapped_all_subtitles
 
 
+def extract_chinese_only(subtitles: List[srt.Subtitle]) -> List[srt.Subtitle]:
+    """
+    提取仅中文字幕
+    
+    Args:
+        subtitles: 字幕列表
+    
+    Returns:
+        只包含中文的字幕列表
+    """
+    if not subtitles:
+        return subtitles
+    
+    chinese_only_subtitles = []
+    index = 1
+    
+    for sub in subtitles:
+        content_lines = sub.content.lstrip('\n').rstrip('\n').split('\n')
+        
+        # 查找中文行
+        chinese_line = None
+        for line in content_lines:
+            if is_chinese(line):
+                chinese_line = line
+                break
+        
+        # 如果找到中文行，创建新的字幕
+        if chinese_line:
+            temp_sub = srt.Subtitle(
+                index=index,
+                start=sub.start,
+                end=sub.end,
+                content=chinese_line
+            )
+            chinese_only_subtitles.append(temp_sub)
+            index += 1
+    
+    return chinese_only_subtitles
+
+
+def extract_other_language_only(subtitles: List[srt.Subtitle]) -> List[srt.Subtitle]:
+    """
+    提取仅其他语言字幕（非中文）
+    
+    Args:
+        subtitles: 字幕列表
+    
+    Returns:
+        只包含其他语言的字幕列表
+    """
+    if not subtitles:
+        return subtitles
+    
+    other_language_subtitles = []
+    index = 1
+    
+    for sub in subtitles:
+        content_lines = sub.content.lstrip('\n').rstrip('\n').split('\n')
+        
+        # 查找非中文行
+        other_line = None
+        for line in content_lines:
+            if not is_chinese(line) and line.strip():  # 非中文且非空
+                other_line = line
+                break
+        
+        # 如果找到非中文行，创建新的字幕
+        if other_line:
+            temp_sub = srt.Subtitle(
+                index=index,
+                start=sub.start,
+                end=sub.end,
+                content=other_line
+            )
+            other_language_subtitles.append(temp_sub)
+            index += 1
+    
+    return other_language_subtitles
+
+
+
 def parse_subtitle_file(filepath: str) -> Tuple[List[srt.Subtitle], str]:
     """
     解析字幕文件，支持多种格式

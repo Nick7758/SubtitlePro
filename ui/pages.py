@@ -11,6 +11,8 @@ from core.subtitle_editor_logic import (
     save_subtitle_file, 
     create_backup,
     swap_chinese_english,
+    extract_chinese_only,
+    extract_other_language_only,
     format_srt_time,
     parse_srt_time
 )
@@ -306,6 +308,7 @@ class SubtitleEditorPage(QtWidgets.QWidget):
         self.current_file = None
         self.current_format = None
         self.subtitles = []
+        self.original_subtitles = []  # 保存原始字幕数据
         self.setup_ui()
     
     def setup_ui(self):
@@ -355,11 +358,20 @@ class SubtitleEditorPage(QtWidgets.QWidget):
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.DoubleClicked | 
                                    QtWidgets.QAbstractItemView.EditKeyPressed)
         
-        # 自定义文本选中时的背景色，使其更柔和
+        # 设置默认行高，确保文字完全显示
+        self.table.verticalHeader().setDefaultSectionSize(35)
+        
+        # 自定义样式：文本选中颜色 + 确保编辑器文字完全可见
         self.table.setStyleSheet("""
             QTableWidget QLineEdit {
                 selection-background-color: #B3D9FF;  /* 柔和的淡蓝色 */
                 selection-color: #000000;  /* 黑色文字 */
+                padding: 4px;  /* 内边距 */
+                border: 1px solid #64B5F6;  /* 边框 */
+                background-color: white;  /* 编辑时白色背景 */
+            }
+            QTableWidget::item {
+                padding: 5px;  /* 单元格内边距 */
             }
         """)
         
@@ -369,16 +381,16 @@ class SubtitleEditorPage(QtWidgets.QWidget):
         options_layout = QtWidgets.QHBoxLayout(self.options_widget)
         options_layout.setContentsMargins(0, 0, 0, 0)
         
-        # 处理选项
-        process_label = QtWidgets.QLabel("处理选项:")
+        # 处理选项（动态更新）
+        process_label = QtWidgets.QLabel("显示模式:")
         self.process_combo = QtWidgets.QComboBox()
-        self.process_combo.addItem("中文在上", True)
-        self.process_combo.addItem("其他语言在上", False)
+        self.process_combo.addItem("中文在上", "chinese_up")
+        self.process_combo.addItem("其他语言在上", "other_up")
+        self.process_combo.addItem("仅中文", "chinese_only")
+        self.process_combo.addItem("仅其他语言", "other_only")
         self.process_combo.setMaximumWidth(150)
-        
-        self.process_btn = QtWidgets.QPushButton("处理")
-        self.process_btn.clicked.connect(self._process_subtitles)
-        self.process_btn.setMaximumWidth(100)
+        # 连接信号，选项改变时动态更新显示
+        self.process_combo.currentIndexChanged.connect(self._on_display_mode_changed)
         
         # 保存格式选项
         format_label = QtWidgets.QLabel("保存格式:")
@@ -396,7 +408,6 @@ class SubtitleEditorPage(QtWidgets.QWidget):
         
         options_layout.addWidget(process_label)
         options_layout.addWidget(self.process_combo)
-        options_layout.addWidget(self.process_btn)
         options_layout.addStretch(1)
         options_layout.addWidget(format_label)
         options_layout.addWidget(self.format_combo)
@@ -433,6 +444,15 @@ class SubtitleEditorPage(QtWidgets.QWidget):
             self.subtitles, self.current_format = parse_subtitle_file(filepath)
             self.current_file = filepath
             self.file_input.setText(filepath)
+            
+            # 保存原始字幕数据（深拷贝）
+            import copy
+            self.original_subtitles = copy.deepcopy(self.subtitles)
+            
+            # 重置显示模式为默认的“中文在上”
+            self.process_combo.blockSignals(True)  # 阻止触发信号
+            self.process_combo.setCurrentIndex(0)
+            self.process_combo.blockSignals(False)
             
             # 更新表格
             self._update_table()
@@ -475,8 +495,45 @@ class SubtitleEditorPage(QtWidgets.QWidget):
             self.table.setItem(i, 3, QtWidgets.QTableWidgetItem(content1))
             self.table.setItem(i, 4, QtWidgets.QTableWidgetItem(content2))
     
+    def _on_display_mode_changed(self):
+        """显示模式改变时动态更新显示"""
+        if not self.original_subtitles:
+            return
+        
+        try:
+            # 从原始数据开始处理
+            import copy
+            temp_subtitles = copy.deepcopy(self.original_subtitles)
+            
+            # 获取处理选项
+            process_option = self.process_combo.currentData()
+            
+            # 根据选项调用不同的处理函数
+            if process_option == "chinese_up":
+                self.subtitles = swap_chinese_english(temp_subtitles, True)
+                mode_text = "中文在上"
+            elif process_option == "other_up":
+                self.subtitles = swap_chinese_english(temp_subtitles, False)
+                mode_text = "其他语言在上"
+            elif process_option == "chinese_only":
+                self.subtitles = extract_chinese_only(temp_subtitles)
+                mode_text = "仅中文"
+            elif process_option == "other_only":
+                self.subtitles = extract_other_language_only(temp_subtitles)
+                mode_text = "仅其他语言"
+            else:
+                return
+            
+            # 更新表格显示
+            self._update_table()
+            
+            self.status_label.setText(f"显示模式：{mode_text}")
+            
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "显示错误", f"切换显示模式时出错:\n{str(e)}")
+    
     def _process_subtitles(self):
-        """处理字幕（交换中文/英文顺序）"""
+        """处理字幕（交换中文/英文顺序或提取单一语言）"""
         if not self.subtitles:
             QtWidgets.QMessageBox.warning(self, "提示", "请先加载字幕文件")
             return
@@ -486,15 +543,27 @@ class SubtitleEditorPage(QtWidgets.QWidget):
             self._read_table_to_subtitles()
             
             # 获取处理选项
-            chinese_up = self.process_combo.currentData()
+            process_option = self.process_combo.currentData()
             
-            # 调用交换函数
-            self.subtitles = swap_chinese_english(self.subtitles, chinese_up)
+            # 根据选项调用不同的处理函数
+            if process_option == "chinese_up":
+                self.subtitles = swap_chinese_english(self.subtitles, True)
+                order_text = "中文在上"
+            elif process_option == "other_up":
+                self.subtitles = swap_chinese_english(self.subtitles, False)
+                order_text = "其他语言在上"
+            elif process_option == "chinese_only":
+                self.subtitles = extract_chinese_only(self.subtitles)
+                order_text = "仅中文"
+            elif process_option == "other_only":
+                self.subtitles = extract_other_language_only(self.subtitles)
+                order_text = "仅其他语言"
+            else:
+                return
             
             # 更新表格显示
             self._update_table()
             
-            order_text = "中文在上" if chinese_up else "其他语言在上"
             self.status_label.setText(f"已处理：{order_text}")
             
         except Exception as e:
