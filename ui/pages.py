@@ -355,11 +355,20 @@ class SubtitleEditorPage(QtWidgets.QWidget):
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.DoubleClicked | 
                                    QtWidgets.QAbstractItemView.EditKeyPressed)
         
-        # 自定义文本选中时的背景色，使其更柔和
+        # 设置默认行高，确保文字完全显示
+        self.table.verticalHeader().setDefaultSectionSize(35)
+        
+        # 自定义样式：文本选中颜色 + 确保编辑器文字完全可见
         self.table.setStyleSheet("""
             QTableWidget QLineEdit {
                 selection-background-color: #B3D9FF;  /* 柔和的淡蓝色 */
                 selection-color: #000000;  /* 黑色文字 */
+                padding: 4px;  /* 内边距 */
+                border: 1px solid #64B5F6;  /* 边框 */
+                background-color: white;  /* 编辑时白色背景 */
+            }
+            QTableWidget::item {
+                padding: 5px;  /* 单元格内边距 */
             }
         """)
         
