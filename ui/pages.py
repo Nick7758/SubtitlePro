@@ -108,7 +108,7 @@ class UploadPage(QtWidgets.QWidget):
 
     def _select_file(self):
         file, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "选择视频文件", "", "视频文件 (*.mp4 *.avi *.mov *.mkv)"
+            self, "选择视频文件", SUB_RESULT_DIR, "视频文件 (*.mp4 *.avi *.mov *.mkv)"
         )
         if file:
             self.videoPath.setText(file)
@@ -326,19 +326,48 @@ class SubtitleEditorPage(QtWidgets.QWidget):
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["序号", "开始时间", "结束时间", "字幕内容1", "字幕内容2"])
         
-        # 设置表格列宽
-        self.table.setColumnWidth(0, 60)
-        self.table.setColumnWidth(1, 120)
-        self.table.setColumnWidth(2, 120)
-        self.table.setColumnWidth(3, 250)
-        self.table.setColumnWidth(4, 250)
+        # 设置表格美化选项
+        self.table.setAlternatingRowColors(True)  # 交替行颜色
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)  # 整行选择
+        self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)  # 单行选择
+        self.table.verticalHeader().setVisible(False)  # 隐藏垂直表头
+        
+        # 设置表头样式
+        header = self.table.horizontalHeader()
+        header.setDefaultAlignment(QtCore.Qt.AlignCenter)  # 表头居中
+        header.setStretchLastSection(True)  # 最后一列自动拉伸填充
+        
+        # 设置列宽策略和初始宽度
+        self.table.setColumnWidth(0, 60)  # 序号列固定宽度
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.Fixed)
+        
+        self.table.setColumnWidth(1, 140)  # 开始时间
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.Interactive)
+        
+        self.table.setColumnWidth(2, 140)  # 结束时间
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.Interactive)
+        
+        # 字幕内容列自动拉伸分配剩余空间
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.Stretch)
         
         # 设置表格可编辑
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.DoubleClicked | 
                                    QtWidgets.QAbstractItemView.EditKeyPressed)
         
-        # 选项区域
-        options_layout = QtWidgets.QHBoxLayout()
+        # 自定义文本选中时的背景色，使其更柔和
+        self.table.setStyleSheet("""
+            QTableWidget QLineEdit {
+                selection-background-color: #B3D9FF;  /* 柔和的淡蓝色 */
+                selection-color: #000000;  /* 黑色文字 */
+            }
+        """)
+        
+        
+        # 选项区域（用容器包装以便控制显示隐藏）
+        self.options_widget = QtWidgets.QWidget()
+        options_layout = QtWidgets.QHBoxLayout(self.options_widget)
+        options_layout.setContentsMargins(0, 0, 0, 0)
         
         # 处理选项
         process_label = QtWidgets.QLabel("处理选项:")
@@ -373,14 +402,18 @@ class SubtitleEditorPage(QtWidgets.QWidget):
         options_layout.addWidget(self.format_combo)
         options_layout.addWidget(self.save_btn)
         
-        # 状态标签
-        self.status_label = QtWidgets.QLabel("就绪")
+        # 状态标签（初始为空）
+        self.status_label = QtWidgets.QLabel("")
+        
+        # 初始隐藏表格和选项区域（只显示文件选择）
+        self.table.setVisible(False)
+        self.options_widget.setVisible(False)
         
         # 主布局
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(file_layout)
         layout.addWidget(self.table)
-        layout.addLayout(options_layout)
+        layout.addWidget(self.options_widget)
         layout.addWidget(self.status_label)
     
     def _select_subtitle_file(self):
@@ -408,6 +441,10 @@ class SubtitleEditorPage(QtWidgets.QWidget):
             # 更新表格
             self._update_table()
             
+            # 显示表格和选项区域（首次加载后显示）
+            self.table.setVisible(True)
+            self.options_widget.setVisible(True)
+            
             # 根据加载的格式设置保存格式下拉框
             format_index = self.format_combo.findData(self.current_format)
             if format_index >= 0:
@@ -419,6 +456,9 @@ class SubtitleEditorPage(QtWidgets.QWidget):
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "加载失败", f"无法加载字幕文件:\n{str(e)}")
             self.status_label.setText("加载失败")
+            # 加载失败时隐藏表格和选项区域
+            self.table.setVisible(False)
+            self.options_widget.setVisible(False)
     
     def _update_table(self):
         """更新表格显示"""
