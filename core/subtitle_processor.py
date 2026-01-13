@@ -25,36 +25,159 @@ def probe_video_size(video_path: str, ffprobe_path: str) -> tuple[int, int]:
         return 1920, 1080  # fallback
 
 
-def create_ass_style(subs: pysubs2.SSAFile, video_width: int, fontsize_factor: float = 0.045):
-    """Create bilingual ASS styles based on video width."""
-    fontsize = video_width * fontsize_factor
-    outline = max(1, fontsize * 0.08)
-    shadow = max(1, fontsize * 0.06)
+def create_ass_style(subs: pysubs2.SSAFile, video_width: int, video_height: int,
+                     chinese_fontsize_factor: float = 0.045, 
+                     other_fontsize_factor: float = 0.04,
+                     margin_v: int = None):
+    """Create bilingual ASS styles based on video width with customizable parameters."""
+    chinese_fontsize = video_width * chinese_fontsize_factor
+    other_fontsize = video_width * other_fontsize_factor
+    outline = max(1, chinese_fontsize * 0.08)
+    shadow = max(1, chinese_fontsize * 0.06)
+    
+    # Calculate margin if not provided
+    if margin_v is None:
+        margin_v = int(video_height / 6)
 
-    subs.styles["Default"].fontsize = fontsize
+    subs.styles["Default"].fontsize = other_fontsize
     subs.styles["Default"].shadow = shadow
     subs.styles["Default"].outline = outline
+    subs.styles["Default"].marginv = margin_v
 
     subs.styles["Chinese"] = subs.styles["Default"].copy()
-    subs.styles["Chinese"].fontsize = fontsize
+    subs.styles["Chinese"].fontsize = chinese_fontsize
     subs.styles["Chinese"].shadow = shadow
     subs.styles["Chinese"].outline = outline
+    subs.styles["Chinese"].marginv = margin_v
 
 
-def convert_srt_to_ass(video_path: str, srt_path: str, ass_path: str, ffmpeg_path: str, ffprobe_path: str):
-    """Convert SRT subtitles to styled ASS format."""
+def convert_srt_to_ass(video_path: str, srt_path: str, ass_path: str, ffmpeg_path: str, ffprobe_path: str,
+                       chinese_fontsize_factor: float = 0.045,
+                       other_fontsize_factor: float = 0.04,
+                       margin_v: int = None):
+    """Convert SRT subtitles to styled ASS format with customizable parameters."""
     width, height = probe_video_size(video_path, ffprobe_path)
 
     subs = pysubs2.load(srt_path, encoding="utf-8")
-    create_ass_style(subs, width)
+    create_ass_style(subs, width, height, chinese_fontsize_factor, other_fontsize_factor, margin_v)
 
     # Apply styles to events
     for line in subs.events:
         if "[zh]" in line.text:
             line.style = "Chinese"
 
-    subs.styles["Default"].fontsize = width * 0.045
     subs.save(ass_path)
+
+
+def create_preview_frame(video_path: str, subtitle_path: str, output_image: str,
+                        ffmpeg_path: str, ffprobe_path: str,
+                        chinese_fontsize_factor: float = 0.045,
+                        other_fontsize_factor: float = 0.04,
+                        margin_v: int = None) -> bool:
+    """
+    Extract first frame and render first subtitle for preview.
+    Uses the same approach as SubtitleEmbedder for path handling.
+    Returns True if successful.
+    """
+    try:
+        # Validate inputs
+        if not os.path.exists(ffmpeg_path):
+            print(f"[ERROR] FFmpeg not found: {ffmpeg_path}")
+            return False
+        
+        if not os.path.exists(video_path):
+            print(f"[ERROR] Video not found: {video_path}")
+            return False
+            
+        if not os.path.exists(subtitle_path):
+            print(f"[ERROR] Subtitle not found: {subtitle_path}")
+            return False
+        
+        print(f"[INFO] Using FFmpeg: {ffmpeg_path}")
+        print(f"[INFO] Video: {video_path}")
+        print(f"[INFO] Subtitle: {subtitle_path}")
+        
+        # Load subtitles and get first subtitle
+        subs = pysubs2.load(subtitle_path, encoding="utf-8")
+        if not subs.events:
+            print("[ERROR] No subtitle events found")
+            return False
+        
+        first_sub = subs.events[0]
+        print(f"[INFO] First subtitle at {first_sub.start}ms: {first_sub.text[:50] if len(first_sub.text) > 50 else first_sub.text}")
+        
+        # Create temporary ASS file with only first subtitle
+        preview_subs = pysubs2.SSAFile()
+        preview_subs.styles = subs.styles.copy()
+        
+        # Get video dimensions
+        width, height = probe_video_size(video_path, ffprobe_path)
+        print(f"[INFO] Video size: {width}x{height}")
+        
+        # Create style with custom parameters
+        create_ass_style(preview_subs, width, height, chinese_fontsize_factor, other_fontsize_factor, margin_v)
+        
+        # Add only first subtitle
+        preview_event = first_sub.copy()
+        # Detect if Chinese and apply style
+        if "[zh]" in preview_event.text or any('\u4e00' <= c <= '\u9fff' for c in preview_event.text):
+            preview_event.style = "Chinese"
+        preview_subs.events.append(preview_event)
+        
+        # Save temporary ASS file in same directory as video (to avoid path issues)
+        video_dir = os.path.dirname(video_path)
+        temp_ass_name = f"_temp_preview_{os.getpid()}.ass"
+        temp_ass_path = os.path.join(video_dir, temp_ass_name)
+        preview_subs.save(temp_ass_path)
+        print(f"[INFO] Temp ASS: {temp_ass_path}")
+        
+        # Extract frame at first subtitle timestamp
+        timestamp = first_sub.start / 1000.0  # Convert ms to seconds
+        
+        # Build FFmpeg command - same approach as SubtitleEmbedder
+        # Use forward slashes for path (same as working code)
+        ass_filter = f"ass={temp_ass_path.replace(os.sep, '/')}"
+        
+        cmd = [
+            ffmpeg_path,
+            "-y",
+            "-ss", str(timestamp),
+            "-i", video_path,
+            "-vf", ass_filter,
+            "-frames:v", "1",
+            output_image
+        ]
+        
+        # Join command into string (same as QProcess approach)
+        cmd_str = " ".join(cmd)
+        print(f"[INFO] Command: {cmd_str}")
+        
+        # Run command using QProcess style (shell execution)
+        result = subprocess.run(cmd_str, capture_output=True, text=True, shell=True)
+        
+        if result.returncode != 0:
+            print(f"[ERROR] FFmpeg failed with code {result.returncode}")
+            print(f"[ERROR] STDERR: {result.stderr}")
+        
+        # Clean up temp file
+        try:
+            os.remove(temp_ass_path)
+        except:
+            pass
+        
+        # Check result
+        if not os.path.exists(output_image):
+            print(f"[ERROR] Output image not created: {output_image}")
+            return False
+        
+        print(f"[SUCCESS] Preview generated: {output_image}")
+        return True
+        
+    except Exception as e:
+        import traceback
+        print(f"[ERROR] Preview generation exception: {e}")
+        print(traceback.format_exc())
+        return False
 
 
 class SubtitleEmbedder(QtCore.QObject):
@@ -74,16 +197,20 @@ class SubtitleEmbedder(QtCore.QObject):
         self._input_video = ""
         self._output_video = ""
 
-    def embed(self, video_path: str, srt_path: str, output_path: str):
-        """Start embedding subtitles into video."""
+    def embed(self, video_path: str, srt_path: str, output_path: str,
+              chinese_fontsize_factor: float = 0.045,
+              other_fontsize_factor: float = 0.04,
+              margin_v: int = None):
+        """Start embedding subtitles into video with custom parameters."""
         self._input_video = video_path
         self._output_video = output_path
 
-        # Convert SRT to ASS
+        # Convert SRT to ASS with custom parameters
         ass_path = srt_path.replace(".srt", ".ass")
-        convert_srt_to_ass(video_path, srt_path, ass_path, self.ffmpeg_path, self.ffprobe_path)
+        convert_srt_to_ass(video_path, srt_path, ass_path, self.ffmpeg_path, self.ffprobe_path,
+                          chinese_fontsize_factor, other_fontsize_factor, margin_v)
 
-        # Prepare FFmpeg command
+        # Prepare FFmpeg command (same as original working code)
         drawbox_filter = "drawbox=y=ih-h:w=iw:h=ih/6:t=max:color=black@0.7"
         ass_filter = f"ass={ass_path.replace(os.sep, '/')}"
         filter_complex = f"{drawbox_filter},{ass_filter}"

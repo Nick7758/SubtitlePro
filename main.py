@@ -17,6 +17,7 @@ from config.theme import apply_business_theme
 from core.api_client import ApiClient
 from ui.components import LoginDialog, notify
 from ui.pages import UploadPage, DownloadPage, BillingPage, SettingsPage, SubtitleEditorPage
+from ui.embed_page import EmbedSubtitlesPage
 
 # --- robust base dir (works in dev & PyInstaller) ---
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
@@ -43,7 +44,7 @@ def _detect_resources_dir() -> str:
 # 确保在加载配置之前先检测资源目录
 RESOURCES_DIR = _detect_resources_dir()
 DEFAULT_FFMPEG_PATH = os.path.join(RESOURCES_DIR, "bin", "ffmpeg.exe")
-
+#DEFAULT_FFMPEG_PATH = "C:/ProgramData/miniconda3/envs/nicksub/Library/bin/ffmpeg.exe"
 
 @dataclass
 class UserState:
@@ -151,6 +152,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # 确保配置中的ffmpeg_path使用本地检测到的默认路径
         if "ffmpeg_path" not in self.config or not self.config["ffmpeg_path"]:
             self.config["ffmpeg_path"] = DEFAULT_FFMPEG_PATH
+        
+        #self.config["ffmpeg_path"] = "C:/ProgramData/miniconda3/envs/nicksub/Library/bin/ffmpeg.exe"
         self.api_client = ApiClient(DEFAULT_API_BASE)
         # 初始化用户信息存储
         self._current_user_info = {}
@@ -203,12 +206,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.upload_page = UploadPage()
         self.download_page = DownloadPage(self.config.get("ffmpeg_path", ""))
         self.subtitle_editor_page = SubtitleEditorPage()
+        # Add embed subtitles page
+        ffmpeg_path = self.config.get("ffmpeg_path", "")
+        import os
+        ffprobe_path = os.path.join(os.path.dirname(ffmpeg_path), "ffprobe.exe") if ffmpeg_path else ""
+        self.embed_page = EmbedSubtitlesPage(ffmpeg_path, ffprobe_path)
         self.billing_page = BillingPage()
         self.settings_page = SettingsPage(self.config)
 
         self.tab_widget.addTab(self.upload_page, "视频翻译")
         self.tab_widget.addTab(self.download_page, "视频下载")
         self.tab_widget.addTab(self.subtitle_editor_page, "修改字幕")
+        self.tab_widget.addTab(self.embed_page, "嵌入字幕到视频")
         self.tab_widget.addTab(self.billing_page, "购买分钟")
         self.tab_widget.addTab(self.settings_page, "设置")
 
@@ -1032,6 +1041,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # 检查ffmpeg路径
         ffmpeg_path = getattr(self, 'ffmpeg_path', None)
+        #ffmpeg_path="C:/ProgramData/miniconda3/envs/nicksub/Library/bin/ffmpeg.exe"
         if not ffmpeg_path or not os.path.exists(ffmpeg_path):
             # 尝试在resources/bin目录下查找ffmpeg
             ffmpeg_path = os.path.join(os.path.dirname(__file__), "resources", "bin", "ffmpeg.exe")

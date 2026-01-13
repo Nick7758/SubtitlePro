@@ -3,7 +3,7 @@ from core.workers import VideoDownloadWorker
 from typing import Optional, List
 import time
 import os
-from config.settings import ASR_DICT, TRANS_DICT, DOWNLOAD_VIDEO_DIR, SUB_RESULT_DIR
+from config.settings import ASR_DICT, TRANS_DICT, DOWNLOAD_VIDEO_DIR, SUB_RESULT_DIR, VIDEO_RESULT_DIR
 import platform
 import srt
 from core.subtitle_editor_logic import (
@@ -16,6 +16,12 @@ from core.subtitle_editor_logic import (
     format_srt_time,
     parse_srt_time
 )
+from core.subtitle_processor import (
+    SubtitleEmbedder,
+    create_preview_frame,
+    probe_video_size
+)
+
 
 
 class UploadPage(QtWidgets.QWidget):
