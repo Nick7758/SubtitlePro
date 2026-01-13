@@ -131,11 +131,22 @@ class UploadPage(QtWidgets.QWidget):
             self.langTgt.setEnabled(True)
             return
 
+        # 获取语言选择
+        lang_src = self.langSrc.currentData()
+        lang_tgt = self.langTgt.currentData()
+        
+        # 验证：源语言和翻译语言不能同时为“无”
+        if lang_src == "None" and lang_tgt == "None":
+            QtWidgets.QMessageBox.warning(self, "参数错误", "源语言和翻译语言不能同时选择“无”，请至少选择一个语言。")
+            self.langSrc.setEnabled(True)
+            self.langTgt.setEnabled(True)
+            return
+
         # Emit signal with parameters
         params = {
             "video_path": vp,
-            "lang_src": self.langSrc.currentData(),
-            "lang_tgt": self.langTgt.currentData(),
+            "lang_src": lang_src,
+            "lang_tgt": lang_tgt,
             "burn_subtitles": self.burnCheck.isChecked()
         }
         self.start_task.emit(params)

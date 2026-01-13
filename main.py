@@ -485,6 +485,11 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "无法获取时长", "未能读取视频时长，请检查设置。")
             return
 
+        # 探测视频尺寸（长和宽）
+        video_width, video_height = self._probe_video_size(video_path)
+        params["video_width"] = video_width
+        params["video_height"] = video_height
+
         # 检查用户余额
         user_minutes = getattr(self, '_current_user_info', {}).get("minutes_left", 0)
         if user_minutes < needed_minutes:
@@ -553,6 +558,33 @@ class MainWindow(QtWidgets.QMainWindow):
         """安全的文件名"""
         import re
         return re.sub(r'[<>:"/\\|?*\x00-\x1F]', '_', filename)
+
+    def _probe_video_size(self, video_path: str) -> tuple:
+        """探测视频尺寸（宽和高）"""
+        try:
+            import subprocess
+            import json
+            import os
+            ffmpeg_path = self.config.get("ffmpeg_path", "")
+            ffprobe_path = os.path.join(os.path.dirname(ffmpeg_path), "ffprobe.exe") if ffmpeg_path else "ffprobe"
+
+            cmd = [
+                ffprobe_path,
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "json",
+                video_path
+            ]
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            result = subprocess.check_output(cmd, startupinfo=si, text=True)
+            data = json.loads(result)
+            stream = data["streams"][0]
+            return stream["width"], stream["height"]
+        except Exception as e:
+            # 如果探测失败，返回默认值 1920x1080
+            return 1920, 1080
 
     def _audio_done(self, video_path: str, audio_path: str):
         """音频提取完成的回调"""
@@ -759,6 +791,11 @@ class MainWindow(QtWidgets.QMainWindow):
         add_field("video_name", os.path.basename(params["video_path"]))
         add_field("lang_src", lang_src)
         add_field("lang_tgt", lang_tgt)
+        
+        # 添加视频尺寸信息
+        if "video_width" in params and "video_height" in params:
+            add_field("video_width", str(params["video_width"]))
+            add_field("video_height", str(params["video_height"]))
 
         # 添加音频文件
         audio_file = QFile(audio_path)
