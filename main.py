@@ -16,7 +16,7 @@ from config.settings import load_config, save_config, DEFAULT_API_BASE, CURRENT_
 from config.theme import apply_business_theme
 from core.api_client import ApiClient
 from ui.components import LoginDialog, notify
-from ui.pages import UploadPage, DownloadPage, BillingPage, SettingsPage
+from ui.pages import UploadPage, DownloadPage, BillingPage, SettingsPage, SubtitleEditorPage
 
 # --- robust base dir (works in dev & PyInstaller) ---
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
@@ -202,11 +202,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tab_widget = QtWidgets.QTabWidget()
         self.upload_page = UploadPage()
         self.download_page = DownloadPage(self.config.get("ffmpeg_path", ""))
+        self.subtitle_editor_page = SubtitleEditorPage()
         self.billing_page = BillingPage()
         self.settings_page = SettingsPage(self.config)
 
         self.tab_widget.addTab(self.upload_page, "视频翻译")
         self.tab_widget.addTab(self.download_page, "视频下载")
+        self.tab_widget.addTab(self.subtitle_editor_page, "修改字幕")
         self.tab_widget.addTab(self.billing_page, "购买分钟")
         self.tab_widget.addTab(self.settings_page, "设置")
 
