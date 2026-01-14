@@ -4,7 +4,7 @@ import json
 import subprocess
 import pysubs2
 from PyQt5 import QtCore
-
+from config.settings import DEFAULT_FFMPEG_PATH
 # Regex for Chinese characters
 CN_RE = re.compile(r"[\u4e00-\u9fff]")
 
@@ -272,35 +272,51 @@ class SubtitleEmbedder(QtCore.QObject):
         """Start embedding subtitles into video with custom parameters."""
         self._input_video = video_path
         self._output_video = output_path
+        print(f"[DEBUG] Original ffmpeg_path: {self.ffmpeg_path}")
+        self.ffmpeg_path = DEFAULT_FFMPEG_PATH
+        print(f"[DEBUG] Using ffmpeg_path: {self.ffmpeg_path}")
 
-        # Convert SRT to ASS with custom parameters (and styling)
-        ass_path = srt_path.replace(".srt", ".ass")
+        # Save ASS file in same directory as video (same as preview method)
+        video_dir = os.path.dirname(os.path.abspath(video_path))
+        ass_filename = os.path.splitext(os.path.basename(srt_path))[0] + "_embed.ass"
+        ass_path = os.path.join(video_dir, ass_filename)
+        
+        print(f"[DEBUG] Video dir: {video_dir}")
+        print(f"[DEBUG] ASS path: {ass_path}")
+        
+        # Convert SRT to ASS with custom parameters
         convert_srt_to_ass(video_path, srt_path, ass_path, self.ffmpeg_path, self.ffprobe_path,
                           chinese_fontsize_factor, other_fontsize_factor, margin_v,
                           chinese_color, other_color)
 
-        # Prepare FFmpeg command
-        ass_dir = os.path.dirname(ass_path)
-        ass_name = os.path.basename(ass_path)
+        # Important: use absolute paths with forward slashes (FFmpeg prefers this)
+        video_abs = os.path.abspath(video_path).replace("\\", "/")
+        output_abs = os.path.abspath(output_path).replace("\\", "/")
         
-        # Use simpler drawbox if needed or match main.py style
+        # Build FFmpeg command (same pattern as preview)
+        # Use relative path for ASS file
         drawbox_filter = "drawbox=y=ih-h:w=iw:h=ih/6:t=max:color=black@0.7"
-        ass_filter = f"ass='{ass_name}'"
-        filter_complex = f"{drawbox_filter},{ass_filter}"
+        ass_filter = f"ass='{ass_filename}'"
+        vf = f"{drawbox_filter},{ass_filter}"
 
-        cmd = [
+        # Build args list
+        args = [
             "-y",
-            "-i", video_path,
-            "-vf", filter_complex,
+            "-i", video_abs,
+            "-vf", vf,
             "-c:v", "libx264",
             "-crf", "18",
             "-preset", "veryfast",
             "-c:a", "copy",
-            output_path
+            output_abs
         ]
         
-        self.proc.setWorkingDirectory(ass_dir)
-        self.proc.start(self.ffmpeg_path, cmd)
+        print(f"[DEBUG] Command: {self.ffmpeg_path} {' '.join(args)}")
+        print(f"[DEBUG] Working dir: {video_dir}")
+        
+        # Set working directory and start (same as preview)
+        self.proc.setWorkingDirectory(video_dir)
+        self.proc.start(self.ffmpeg_path, args)
 
     def _on_output(self):
         """Parse FFmpeg output for progress."""
@@ -320,8 +336,14 @@ class SubtitleEmbedder(QtCore.QObject):
 
     def _on_finished(self, code, _status):
         """Handle process completion."""
+        print(f"[DEBUG] FFmpeg finished with code: {code}")
+        print(f"[DEBUG] Output video exists: {os.path.exists(self._output_video)}")
+        
         if code == 0 and os.path.exists(self._output_video):
             self.progress.emit(100)
             self.finished.emit(self._output_video)
         else:
+            # Get FFmpeg error output
+            error_output = self.proc.readAllStandardOutput().data().decode("utf-8", errors="ignore")
+            print(f"[ERROR] FFmpeg output:\n{error_output}")
             self.error.emit(f"FFmpeg 处理失败 (退出码: {code})")

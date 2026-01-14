@@ -1,6 +1,7 @@
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 from core.subtitle_processor import create_preview_frame, SubtitleEmbedder
+from config.settings import RESULT_DIR, SUB_RESULT_DIR, VIDEO_RESULT_DIR
 import os
 
 
@@ -186,7 +187,7 @@ class EmbedSubtitlesPage(QtWidgets.QWidget):
     
     def _select_subtitle(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "选择字幕文件", "", "Subtitle Files (*.srt *.ass *.ssa *.vtt)"
+            self, "选择字幕文件", SUB_RESULT_DIR, "Subtitle Files (*.srt *.ass *.ssa *.vtt)"
         )
         if path:
             self.subtitle_path = path
@@ -195,7 +196,7 @@ class EmbedSubtitlesPage(QtWidgets.QWidget):
             
     def _select_video(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "选择视频文件", "", "Video Files (*.mp4 *.avi *.mkv *.mov *.flv)"
+            self, "选择视频文件", VIDEO_RESULT_DIR, "Video Files (*.mp4 *.avi *.mkv *.mov *.flv)"
         )
         if path:
             self.video_path = path
