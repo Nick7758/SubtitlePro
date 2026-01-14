@@ -70,11 +70,21 @@ def process_bilingual_event(event, video_height,
     EN_FAM = "Arial"
     
     if len(lines) >= 2:
-        # Heuristic: If 2+ lines, usually Top=English/Other, Bottom=Chinese
-        # We enforce this style: Line 1 (Other) + Line 2 (Chinese)
-        en_line = fr"{{\fn{EN_FAM}\fs{en_fs}\b0\c{other_color}}}{lines[0]}"
-        zh_line = fr"{{\fn{ZH_FAM}\fs{zh_fs}\b1\c{chinese_color}}}{lines[1]}"
-        event.text = en_line + r"\N" + zh_line
+        # Detect language for each line to apply correct colors
+        is_cn_0 = bool(CN_RE.search(lines[0]))
+        is_cn_1 = bool(CN_RE.search(lines[1]))
+        
+        # Format each line based on its detected language
+        def format_line(text, is_chinese):
+            fam = ZH_FAM if is_chinese else EN_FAM
+            fs = zh_fs if is_chinese else en_fs
+            color = chinese_color if is_chinese else other_color
+            bold = r"\b1" if is_chinese else r"\b0"
+            return fr"{{\fn{fam}\fs{fs}{bold}\c{color}}}{text}"
+        
+        line0 = format_line(lines[0], is_cn_0)
+        line1 = format_line(lines[1], is_cn_1)
+        event.text = line0 + r"\N" + line1
     elif len(lines) == 1:
         # Single line: detect language
         is_cn = bool(CN_RE.search(lines[0]))

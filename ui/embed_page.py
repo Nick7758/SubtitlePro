@@ -56,7 +56,8 @@ class EmbedSubtitlesPage(QtWidgets.QWidget):
         
         # Chinese Color Button
         self.zh_color_btn = QtWidgets.QPushButton()
-        self.zh_color_btn.setFixedSize(50, 24)
+        self.zh_color_btn.setFixedWidth(50)
+        self.zh_color_btn.setMinimumHeight(self.chinese_fontsize.sizeHint().height())
         self.zh_color_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self.zh_color_btn.clicked.connect(self._pick_zh_color)
         self._update_color_btn(self.zh_color_btn, self.zh_color)
@@ -67,6 +68,7 @@ class EmbedSubtitlesPage(QtWidgets.QWidget):
         zh_layout.addWidget(self.chinese_fontsize)
         zh_layout.addWidget(QtWidgets.QLabel("颜色:"))
         zh_layout.addWidget(self.zh_color_btn)
+        zh_layout.addStretch()
         
         # Other language font size
         self.other_fontsize = QtWidgets.QDoubleSpinBox()
@@ -79,7 +81,8 @@ class EmbedSubtitlesPage(QtWidgets.QWidget):
         
         # Other Color Button
         self.other_color_btn = QtWidgets.QPushButton()
-        self.other_color_btn.setFixedSize(50, 24)
+        self.other_color_btn.setFixedWidth(50)
+        self.other_color_btn.setMinimumHeight(self.other_fontsize.sizeHint().height())
         self.other_color_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self.other_color_btn.clicked.connect(self._pick_other_color)
         self._update_color_btn(self.other_color_btn, self.other_color)
@@ -90,6 +93,7 @@ class EmbedSubtitlesPage(QtWidgets.QWidget):
         other_layout.addWidget(self.other_fontsize)
         other_layout.addWidget(QtWidgets.QLabel("颜色:"))
         other_layout.addWidget(self.other_color_btn)
+        other_layout.addStretch()
         
         # Bottom margin
         self.margin_spinbox = QtWidgets.QSpinBox()
