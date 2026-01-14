@@ -134,12 +134,12 @@ def create_preview_frame(video_path: str, subtitle_path: str, output_image: str,
         # Extract frame at first subtitle timestamp
         timestamp = first_sub.start / 1000.0  # Convert ms to seconds
         
-        # Build FFmpeg command - same approach as SubtitleEmbedder
-        # Use forward slashes for path (same as working code)
-        ass_filter = f"ass={temp_ass_path.replace(os.sep, '/')}"
+        # Build FFmpeg command - use relative path to avoid Windows path issues
+        # Since we set working dir to video_dir, we can just use the filename
+        ass_filter = f"ass='{temp_ass_name}'"
         
-        cmd = [
-            ffmpeg_path,
+        # Build args list
+        args = [
             "-y",
             "-ss", str(timestamp),
             "-i", video_path,
@@ -148,16 +148,35 @@ def create_preview_frame(video_path: str, subtitle_path: str, output_image: str,
             output_image
         ]
         
-        # Join command into string (same as QProcess approach)
-        cmd_str = " ".join(cmd)
-        print(f"[INFO] Command: {cmd_str}")
+        print(f"[INFO] Command: {ffmpeg_path} {' '.join(args)}")
+        print(f"[INFO] WorkDir: {video_dir}")
         
-        # Run command using QProcess style (shell execution)
-        result = subprocess.run(cmd_str, capture_output=True, text=True, shell=True)
+        # Run using QProcess
+        from PyQt5.QtCore import QProcess, QEventLoop
         
-        if result.returncode != 0:
-            print(f"[ERROR] FFmpeg failed with code {result.returncode}")
-            print(f"[ERROR] STDERR: {result.stderr}")
+        proc = QProcess()
+        proc.setWorkingDirectory(video_dir)  # Set CWD to avoid path issues
+        proc.start(ffmpeg_path, args)
+        
+        # Wait for process to finish (blocking with event loop)
+        loop = QEventLoop()
+        proc.finished.connect(loop.quit)
+        
+        # Set timeout of 30 seconds
+        from PyQt5.QtCore import QTimer
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(loop.quit)
+        timer.start(30000)
+        
+        loop.exec_()
+        timer.stop()
+        
+        exit_code = proc.exitCode()
+        if exit_code != 0:
+            stderr = bytes(proc.readAllStandardError()).decode('utf-8', errors='ignore')
+            print(f"[ERROR] FFmpeg failed with code {exit_code}")
+            print(f"[ERROR] STDERR: {stderr}")
         
         # Clean up temp file
         try:
@@ -210,13 +229,17 @@ class SubtitleEmbedder(QtCore.QObject):
         convert_srt_to_ass(video_path, srt_path, ass_path, self.ffmpeg_path, self.ffprobe_path,
                           chinese_fontsize_factor, other_fontsize_factor, margin_v)
 
-        # Prepare FFmpeg command (same as original working code)
+        # Prepare FFmpeg command
+        # Use relative path for ASS file if possible, or fall back to absolute path with careful escaping
+        # The best way is to set working directory to where the ASS file is
+        ass_dir = os.path.dirname(ass_path)
+        ass_name = os.path.basename(ass_path)
+        
         drawbox_filter = "drawbox=y=ih-h:w=iw:h=ih/6:t=max:color=black@0.7"
-        ass_filter = f"ass={ass_path.replace(os.sep, '/')}"
+        ass_filter = f"ass='{ass_name}'"
         filter_complex = f"{drawbox_filter},{ass_filter}"
 
         cmd = [
-            self.ffmpeg_path,
             "-y",
             "-i", video_path,
             "-vf", filter_complex,
@@ -226,8 +249,9 @@ class SubtitleEmbedder(QtCore.QObject):
             "-c:a", "copy",
             output_path
         ]
-
-        self.proc.start(" ".join(cmd))
+        
+        self.proc.setWorkingDirectory(ass_dir)
+        self.proc.start(self.ffmpeg_path, cmd)
 
     def _on_output(self):
         """Parse FFmpeg output for progress."""
