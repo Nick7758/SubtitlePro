@@ -163,7 +163,7 @@ class MainWindow(QtWidgets.QMainWindow):
         API_CLIENT = self.api_client
         MAIN_WINDOW = self
 
-        self.setWindowTitle("NickSub Pro v1.0 - AI 视频翻译专家")
+        self.setWindowTitle("NickSub Pro v1.1 - AI 视频翻译专家")
         self.resize(1100, 760)  # 修改为与nick.py一致的大小
 
         # 设置窗口图标

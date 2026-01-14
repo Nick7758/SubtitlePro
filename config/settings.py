@@ -10,7 +10,7 @@ TRANS_DICT = [("中文", "zh"), ("无", "None"), ("英语", "en"), ("西班牙�
               ("葡萄牙语", "pt"), ("俄语", "ru"), ("意大利语", "it"), ("印尼语", "id"), ("土耳其语", "tr"), ("越南语", "vi"),
               ("阿拉伯语", "ar"), ("荷兰语", "nl")]
 # --- UPDATE CONFIGURATION ---
-CURRENT_VERSION = "1.0"
+CURRENT_VERSION = "1.1"
 # PASTE YOUR RAW GITHUB LINK INSIDE THE QUOTES BELOW:
 UPDATE_URL = "https://gitee.com/nicksub/nick-sub-updates/raw/master/version.json"
 
