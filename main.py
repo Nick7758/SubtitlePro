@@ -16,7 +16,8 @@ from config.settings import load_config, save_config, DEFAULT_API_BASE, CURRENT_
 from config.theme import apply_business_theme
 from core.api_client import ApiClient
 from ui.components import LoginDialog, notify
-from ui.pages import UploadPage, DownloadPage, BillingPage, SettingsPage
+from ui.pages import UploadPage, DownloadPage, BillingPage, SettingsPage, SubtitleEditorPage
+from ui.embed_page import EmbedSubtitlesPage
 
 # --- robust base dir (works in dev & PyInstaller) ---
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
@@ -43,7 +44,7 @@ def _detect_resources_dir() -> str:
 # 确保在加载配置之前先检测资源目录
 RESOURCES_DIR = _detect_resources_dir()
 DEFAULT_FFMPEG_PATH = os.path.join(RESOURCES_DIR, "bin", "ffmpeg.exe")
-
+#DEFAULT_FFMPEG_PATH = "C:/ProgramData/miniconda3/envs/nicksub/Library/bin/ffmpeg.exe"
 
 @dataclass
 class UserState:
@@ -151,6 +152,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # 确保配置中的ffmpeg_path使用本地检测到的默认路径
         if "ffmpeg_path" not in self.config or not self.config["ffmpeg_path"]:
             self.config["ffmpeg_path"] = DEFAULT_FFMPEG_PATH
+        
+        #self.config["ffmpeg_path"] = "C:/ProgramData/miniconda3/envs/nicksub/Library/bin/ffmpeg.exe"
         self.api_client = ApiClient(DEFAULT_API_BASE)
         # 初始化用户信息存储
         self._current_user_info = {}
@@ -160,7 +163,7 @@ class MainWindow(QtWidgets.QMainWindow):
         API_CLIENT = self.api_client
         MAIN_WINDOW = self
 
-        self.setWindowTitle("NickSub Pro v1.0 - AI 视频翻译专家")
+        self.setWindowTitle("NickSub Pro v1.1 - AI 视频翻译专家")
         self.resize(1100, 760)  # 修改为与nick.py一致的大小
 
         # 设置窗口图标
@@ -202,11 +205,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tab_widget = QtWidgets.QTabWidget()
         self.upload_page = UploadPage()
         self.download_page = DownloadPage(self.config.get("ffmpeg_path", ""))
+        self.subtitle_editor_page = SubtitleEditorPage()
+        # Add embed subtitles page
+        ffmpeg_path = self.config.get("ffmpeg_path", "")
+        import os
+        ffprobe_path = os.path.join(os.path.dirname(ffmpeg_path), "ffprobe.exe") if ffmpeg_path else ""
+        self.embed_page = EmbedSubtitlesPage(ffmpeg_path, ffprobe_path)
         self.billing_page = BillingPage()
         self.settings_page = SettingsPage(self.config)
 
         self.tab_widget.addTab(self.upload_page, "视频翻译")
         self.tab_widget.addTab(self.download_page, "视频下载")
+        self.tab_widget.addTab(self.subtitle_editor_page, "修改字幕")
+        self.tab_widget.addTab(self.embed_page, "嵌入字幕到视频")
         self.tab_widget.addTab(self.billing_page, "购买分钟")
         self.tab_widget.addTab(self.settings_page, "设置")
 
@@ -483,6 +494,11 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "无法获取时长", "未能读取视频时长，请检查设置。")
             return
 
+        # 探测视频尺寸（长和宽）
+        video_width, video_height = self._probe_video_size(video_path)
+        params["video_width"] = video_width
+        params["video_height"] = video_height
+
         # 检查用户余额
         user_minutes = getattr(self, '_current_user_info', {}).get("minutes_left", 0)
         if user_minutes < needed_minutes:
@@ -551,6 +567,33 @@ class MainWindow(QtWidgets.QMainWindow):
         """安全的文件名"""
         import re
         return re.sub(r'[<>:"/\\|?*\x00-\x1F]', '_', filename)
+
+    def _probe_video_size(self, video_path: str) -> tuple:
+        """探测视频尺寸（宽和高）"""
+        try:
+            import subprocess
+            import json
+            import os
+            ffmpeg_path = self.config.get("ffmpeg_path", "")
+            ffprobe_path = os.path.join(os.path.dirname(ffmpeg_path), "ffprobe.exe") if ffmpeg_path else "ffprobe"
+
+            cmd = [
+                ffprobe_path,
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "json",
+                video_path
+            ]
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            result = subprocess.check_output(cmd, startupinfo=si, text=True)
+            data = json.loads(result)
+            stream = data["streams"][0]
+            return stream["width"], stream["height"]
+        except Exception as e:
+            # 如果探测失败，返回默认值 1920x1080
+            return 1920, 1080
 
     def _audio_done(self, video_path: str, audio_path: str):
         """音频提取完成的回调"""
@@ -757,6 +800,11 @@ class MainWindow(QtWidgets.QMainWindow):
         add_field("video_name", os.path.basename(params["video_path"]))
         add_field("lang_src", lang_src)
         add_field("lang_tgt", lang_tgt)
+        
+        # 添加视频尺寸信息
+        if "video_width" in params and "video_height" in params:
+            add_field("video_width", str(params["video_width"]))
+            add_field("video_height", str(params["video_height"]))
 
         # 添加音频文件
         audio_file = QFile(audio_path)
@@ -993,6 +1041,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # 检查ffmpeg路径
         ffmpeg_path = getattr(self, 'ffmpeg_path', None)
+        #ffmpeg_path="C:/ProgramData/miniconda3/envs/nicksub/Library/bin/ffmpeg.exe"
         if not ffmpeg_path or not os.path.exists(ffmpeg_path):
             # 尝试在resources/bin目录下查找ffmpeg
             ffmpeg_path = os.path.join(os.path.dirname(__file__), "resources", "bin", "ffmpeg.exe")

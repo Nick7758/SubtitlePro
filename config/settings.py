@@ -3,14 +3,14 @@ import json
 from typing import Any, Dict
 import sys
 
-ASR_DICT = [("自动检测", "Auto"), ("英语", "en"), ("中文", "zh"), ("西班牙语", "es"), ("日语", "ja"), ("法语", "fr"), ("德语", "de"),
+ASR_DICT = [("自动检测", "Auto"), ("无", "None"), ("英语", "en"), ("中文", "zh"), ("西班牙语", "es"), ("日语", "ja"), ("法语", "fr"), ("德语", "de"),
             ("韩语", "ko"), ("葡萄牙语", "pt"), ("俄语", "ru"), ("意大利语", "it"), ("印尼语", "id"), ("土耳其语", "tr"), ("越南语", "vi"),
             ("阿拉伯语", "ar"), ("荷兰语", "nl")]
-TRANS_DICT = [("中文", "zh"), ("英语", "en"), ("西班牙语", "es"), ("日语", "ja"), ("法语", "fr"), ("德语", "de"), ("韩语", "ko"),
+TRANS_DICT = [("中文", "zh"), ("无", "None"), ("英语", "en"), ("西班牙语", "es"), ("日语", "ja"), ("法语", "fr"), ("德语", "de"), ("韩语", "ko"),
               ("葡萄牙语", "pt"), ("俄语", "ru"), ("意大利语", "it"), ("印尼语", "id"), ("土耳其语", "tr"), ("越南语", "vi"),
               ("阿拉伯语", "ar"), ("荷兰语", "nl")]
 # --- UPDATE CONFIGURATION ---
-CURRENT_VERSION = "1.0"
+CURRENT_VERSION = "1.1"
 # PASTE YOUR RAW GITHUB LINK INSIDE THE QUOTES BELOW:
 UPDATE_URL = "https://gitee.com/nicksub/nick-sub-updates/raw/master/version.json"
 

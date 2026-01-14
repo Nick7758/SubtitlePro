@@ -1,10 +1,27 @@
 from PyQt5 import QtCore, QtGui, QtWidgets
 from core.workers import VideoDownloadWorker
-from typing import Optional
+from typing import Optional, List
 import time
 import os
-from config.settings import ASR_DICT, TRANS_DICT, DOWNLOAD_VIDEO_DIR
+from config.settings import ASR_DICT, TRANS_DICT, DOWNLOAD_VIDEO_DIR, SUB_RESULT_DIR, VIDEO_RESULT_DIR
 import platform
+import srt
+from core.subtitle_editor_logic import (
+    parse_subtitle_file, 
+    save_subtitle_file, 
+    create_backup,
+    swap_chinese_english,
+    extract_chinese_only,
+    extract_other_language_only,
+    format_srt_time,
+    parse_srt_time
+)
+from core.subtitle_processor import (
+    SubtitleEmbedder,
+    create_preview_frame,
+    probe_video_size
+)
+
 
 
 class UploadPage(QtWidgets.QWidget):
@@ -99,7 +116,7 @@ class UploadPage(QtWidgets.QWidget):
 
     def _select_file(self):
         file, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "选择视频文件", "", "视频文件 (*.mp4 *.avi *.mov *.mkv)"
+            self, "选择视频文件", SUB_RESULT_DIR, "视频文件 (*.mp4 *.avi *.mov *.mkv)"
         )
         if file:
             self.videoPath.setText(file)
@@ -120,11 +137,22 @@ class UploadPage(QtWidgets.QWidget):
             self.langTgt.setEnabled(True)
             return
 
+        # 获取语言选择
+        lang_src = self.langSrc.currentData()
+        lang_tgt = self.langTgt.currentData()
+        
+        # 验证：源语言和翻译语言不能同时为“无”
+        if lang_src == "None" and lang_tgt == "None":
+            QtWidgets.QMessageBox.warning(self, "参数错误", "源语言和翻译语言不能同时选择“无”，请至少选择一个语言。")
+            self.langSrc.setEnabled(True)
+            self.langTgt.setEnabled(True)
+            return
+
         # Emit signal with parameters
         params = {
             "video_path": vp,
-            "lang_src": self.langSrc.currentData(),
-            "lang_tgt": self.langTgt.currentData(),
+            "lang_src": lang_src,
+            "lang_tgt": lang_tgt,
             "burn_subtitles": self.burnCheck.isChecked()
         }
         self.start_task.emit(params)
@@ -287,6 +315,350 @@ class DownloadPage(QtWidgets.QWidget):
     def set_progress(self, value: int):
         """设置进度条值"""
         self.progress_bar.setValue(value)
+
+
+class SubtitleEditorPage(QtWidgets.QWidget):
+    """Subtitle editor page for editing subtitle files."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.current_file = None
+        self.current_format = None
+        self.subtitles = []
+        self.original_subtitles = []  # 保存原始字幕数据
+        self.setup_ui()
+    
+    def setup_ui(self):
+        # 文件选择区域
+        self.file_input = QtWidgets.QLineEdit()
+        self.file_input.setPlaceholderText("请选择字幕文件...")
+        self.file_input.setReadOnly(True)
+        
+        self.select_file_btn = QtWidgets.QPushButton("选择字幕文件")
+        self.select_file_btn.clicked.connect(self._select_subtitle_file)
+        
+        file_layout = QtWidgets.QHBoxLayout()
+        file_layout.addWidget(self.file_input)
+        file_layout.addWidget(self.select_file_btn)
+        
+        # 表格显示区域
+        self.table = QtWidgets.QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["序号", "开始时间", "结束时间", "字幕内容1", "字幕内容2"])
+        
+        # 设置表格美化选项
+        self.table.setAlternatingRowColors(True)  # 交替行颜色
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)  # 整行选择
+        self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)  # 单行选择
+        self.table.verticalHeader().setVisible(False)  # 隐藏垂直表头
+        
+        # 设置表头样式
+        header = self.table.horizontalHeader()
+        header.setDefaultAlignment(QtCore.Qt.AlignCenter)  # 表头居中
+        header.setStretchLastSection(True)  # 最后一列自动拉伸填充
+        
+        # 设置列宽策略和初始宽度
+        self.table.setColumnWidth(0, 60)  # 序号列固定宽度
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.Fixed)
+        
+        self.table.setColumnWidth(1, 140)  # 开始时间
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.Interactive)
+        
+        self.table.setColumnWidth(2, 140)  # 结束时间
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.Interactive)
+        
+        # 字幕内容列自动拉伸分配剩余空间
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.Stretch)
+        
+        # 设置表格可编辑
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.DoubleClicked | 
+                                   QtWidgets.QAbstractItemView.EditKeyPressed)
+        
+        # 设置默认行高，确保文字完全显示
+        self.table.verticalHeader().setDefaultSectionSize(35)
+        
+        # 自定义样式：文本选中颜色 + 确保编辑器文字完全可见
+        self.table.setStyleSheet("""
+            QTableWidget QLineEdit {
+                selection-background-color: #B3D9FF;  /* 柔和的淡蓝色 */
+                selection-color: #000000;  /* 黑色文字 */
+                padding: 4px;  /* 内边距 */
+                border: 1px solid #64B5F6;  /* 边框 */
+                background-color: white;  /* 编辑时白色背景 */
+            }
+            QTableWidget::item {
+                padding: 5px;  /* 单元格内边距 */
+            }
+        """)
+        
+        
+        # 选项区域（用容器包装以便控制显示隐藏）
+        self.options_widget = QtWidgets.QWidget()
+        options_layout = QtWidgets.QHBoxLayout(self.options_widget)
+        options_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # 处理选项（动态更新）
+        process_label = QtWidgets.QLabel("显示模式:")
+        self.process_combo = QtWidgets.QComboBox()
+        self.process_combo.addItem("中文在上", "chinese_up")
+        self.process_combo.addItem("其他语言在上", "other_up")
+        self.process_combo.addItem("仅中文", "chinese_only")
+        self.process_combo.addItem("仅其他语言", "other_only")
+        self.process_combo.setMaximumWidth(150)
+        # 连接信号，选项改变时动态更新显示
+        self.process_combo.currentIndexChanged.connect(self._on_display_mode_changed)
+        
+        # 保存格式选项
+        format_label = QtWidgets.QLabel("保存格式:")
+        self.format_combo = QtWidgets.QComboBox()
+        self.format_combo.addItem(".srt格式", "srt")
+        self.format_combo.addItem(".ass格式", "ass")
+        self.format_combo.addItem(".ssa格式", "ssa")
+        self.format_combo.addItem(".vtt格式", "vtt")
+        self.format_combo.setMaximumWidth(150)
+        
+        self.save_btn = QtWidgets.QPushButton("保存文件")
+        self.save_btn.clicked.connect(self._save_file)
+        self.save_btn.setEnabled(False)
+        self.save_btn.setMaximumWidth(100)
+        
+        options_layout.addWidget(process_label)
+        options_layout.addWidget(self.process_combo)
+        options_layout.addStretch(1)
+        options_layout.addWidget(format_label)
+        options_layout.addWidget(self.format_combo)
+        options_layout.addWidget(self.save_btn)
+        
+        # 状态标签（初始为空）
+        self.status_label = QtWidgets.QLabel("")
+        
+        # 主布局
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(file_layout)
+        layout.addWidget(self.table)
+        layout.addWidget(self.options_widget)
+        layout.addWidget(self.status_label)
+    
+    def _select_subtitle_file(self):
+        """选择字幕文件"""
+        # 默认目录为字幕结果目录
+        default_dir = SUB_RESULT_DIR if os.path.exists(SUB_RESULT_DIR) else os.path.expanduser("~")
+        
+        file, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, 
+            "选择字幕文件", 
+            default_dir,
+            "字幕文件 (*.srt *.ass *.ssa *.vtt);;所有文件 (*.*)"
+        )
+        
+        if file:
+            self._load_subtitle_file(file)
+    
+    def _load_subtitle_file(self, filepath: str):
+        """加载字幕文件"""
+        try:
+            self.subtitles, self.current_format = parse_subtitle_file(filepath)
+            self.current_file = filepath
+            self.file_input.setText(filepath)
+            
+            # 保存原始字幕数据（深拷贝）
+            import copy
+            self.original_subtitles = copy.deepcopy(self.subtitles)
+            
+            # 重置显示模式为默认的“中文在上”
+            self.process_combo.blockSignals(True)  # 阻止触发信号
+            self.process_combo.setCurrentIndex(0)
+            self.process_combo.blockSignals(False)
+            
+            # 更新表格
+            self._update_table()
+            
+            # 根据加载的格式设置保存格式下拉框
+            format_index = self.format_combo.findData(self.current_format)
+            if format_index >= 0:
+                self.format_combo.setCurrentIndex(format_index)
+            
+            self.save_btn.setEnabled(True)
+            self.status_label.setText(f"已加载 {len(self.subtitles)} 条字幕")
+            
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "加载失败", f"无法加载字幕文件:\n{str(e)}")
+            self.status_label.setText("加载失败")
+    
+    def _update_table(self):
+        """更新表格显示"""
+        self.table.setRowCount(len(self.subtitles))
+        
+        for i, sub in enumerate(self.subtitles):
+            # 序号
+            seq_item = QtWidgets.QTableWidgetItem(str(sub.index))
+            seq_item.setFlags(seq_item.flags() & ~QtCore.Qt.ItemIsEditable)  # 序号不可编辑
+            self.table.setItem(i, 0, seq_item)
+            
+            # 开始时间
+            start_item = QtWidgets.QTableWidgetItem(format_srt_time(sub.start))
+            self.table.setItem(i, 1, start_item)
+            
+            # 结束时间
+            end_item = QtWidgets.QTableWidgetItem(format_srt_time(sub.end))
+            self.table.setItem(i, 2, end_item)
+            
+            # 字幕内容（分两行）
+            content_lines = sub.content.split('\n', 1)
+            content1 = content_lines[0] if len(content_lines) > 0 else ""
+            content2 = content_lines[1] if len(content_lines) > 1 else ""
+            
+            self.table.setItem(i, 3, QtWidgets.QTableWidgetItem(content1))
+            self.table.setItem(i, 4, QtWidgets.QTableWidgetItem(content2))
+    
+    def _on_display_mode_changed(self):
+        """显示模式改变时动态更新显示"""
+        if not self.original_subtitles:
+            return
+        
+        try:
+            # 从原始数据开始处理
+            import copy
+            temp_subtitles = copy.deepcopy(self.original_subtitles)
+            
+            # 获取处理选项
+            process_option = self.process_combo.currentData()
+            
+            # 根据选项调用不同的处理函数
+            if process_option == "chinese_up":
+                self.subtitles = swap_chinese_english(temp_subtitles, True)
+                mode_text = "中文在上"
+            elif process_option == "other_up":
+                self.subtitles = swap_chinese_english(temp_subtitles, False)
+                mode_text = "其他语言在上"
+            elif process_option == "chinese_only":
+                self.subtitles = extract_chinese_only(temp_subtitles)
+                mode_text = "仅中文"
+            elif process_option == "other_only":
+                self.subtitles = extract_other_language_only(temp_subtitles)
+                mode_text = "仅其他语言"
+            else:
+                return
+            
+            # 更新表格显示
+            self._update_table()
+            
+            self.status_label.setText(f"显示模式：{mode_text}")
+            
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "显示错误", f"切换显示模式时出错:\n{str(e)}")
+    
+    def _process_subtitles(self):
+        """处理字幕（交换中文/英文顺序或提取单一语言）"""
+        if not self.subtitles:
+            QtWidgets.QMessageBox.warning(self, "提示", "请先加载字幕文件")
+            return
+        
+        try:
+            # 先从表格读取当前的编辑内容
+            self._read_table_to_subtitles()
+            
+            # 获取处理选项
+            process_option = self.process_combo.currentData()
+            
+            # 根据选项调用不同的处理函数
+            if process_option == "chinese_up":
+                self.subtitles = swap_chinese_english(self.subtitles, True)
+                order_text = "中文在上"
+            elif process_option == "other_up":
+                self.subtitles = swap_chinese_english(self.subtitles, False)
+                order_text = "其他语言在上"
+            elif process_option == "chinese_only":
+                self.subtitles = extract_chinese_only(self.subtitles)
+                order_text = "仅中文"
+            elif process_option == "other_only":
+                self.subtitles = extract_other_language_only(self.subtitles)
+                order_text = "仅其他语言"
+            else:
+                return
+            
+            # 更新表格显示
+            self._update_table()
+            
+            self.status_label.setText(f"已处理：{order_text}")
+            
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "处理失败", f"处理字幕时出错:\n{str(e)}")
+    
+    def _read_table_to_subtitles(self):
+        """从表格读取内容到字幕列表"""
+        for i in range(self.table.rowCount()):
+            try:
+                # 读取时间
+                start_str = self.table.item(i, 1).text()
+                end_str = self.table.item(i, 2).text()
+                
+                # 解析时间
+                start = parse_srt_time(start_str)
+                end = parse_srt_time(end_str)
+                
+                # 读取内容
+                content1 = self.table.item(i, 3).text() if self.table.item(i, 3) else ""
+                content2 = self.table.item(i, 4).text() if self.table.item(i, 4) else ""
+                
+                # 组合内容
+                if content2:
+                    content = content1 + '\n' + content2
+                else:
+                    content = content1
+                
+                # 更新字幕对象
+                self.subtitles[i].start = start
+                self.subtitles[i].end = end
+                self.subtitles[i].content = content
+                
+            except Exception as e:
+                raise Exception(f"第 {i+1} 行数据格式错误: {str(e)}")
+    
+    def _save_file(self):
+        """保存文件"""
+        if not self.subtitles or not self.current_file:
+            QtWidgets.QMessageBox.warning(self, "提示", "没有可保存的内容")
+            return
+        
+        try:
+            # 从表格读取最新的编辑内容
+            self._read_table_to_subtitles()
+            
+            # 获取保存格式
+            save_format = self.format_combo.currentData()
+            
+            # 创建备份
+            try:
+                backup_path = create_backup(self.current_file)
+                self.status_label.setText(f"已创建备份: {os.path.basename(backup_path)}")
+            except Exception as e:
+                reply = QtWidgets.QMessageBox.question(
+                    self,
+                    "备份失败",
+                    f"无法创建备份文件:\n{str(e)}\n\n是否继续保存？",
+                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
+                )
+                if reply != QtWidgets.QMessageBox.Yes:
+                    return
+            
+            # 确定保存路径
+            base_path = os.path.splitext(self.current_file)[0]
+            save_path = f"{base_path}.{save_format}"
+            
+            # 保存文件
+            save_subtitle_file(self.subtitles, save_path, save_format)
+            
+            QtWidgets.QMessageBox.information(
+                self, 
+                "保存成功", 
+                f"字幕已保存为 {save_format.upper()} 格式:\n{save_path}"
+            )
+            self.status_label.setText(f"已保存: {os.path.basename(save_path)}")
+            
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "保存失败", f"保存字幕文件时出错:\n{str(e)}")
 
 
 class BillingPage(QtWidgets.QWidget):
