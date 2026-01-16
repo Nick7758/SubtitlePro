@@ -1024,78 +1024,96 @@ class MainWindow(QtWidgets.QMainWindow):
             os.system(f"xdg-open '{VIDEO_RESULT_DIR}'")
 
     def _embed_subtitles(self, video_in: str, subs_path: str):
-        """嵌入字幕到视频中"""
+        """
+        嵌入字幕到视频中 (完美适配竖屏版)
+        修正逻辑：所有尺寸（字号、黑条高、抬高、边距）均基于视频【短边】计算。
+        彻底解决竖屏下黑条过大、留白过多的问题。
+        """
         import subprocess
         import re
         import uuid
         import time
         from PyQt5.QtCore import QProcess
 
-        # 确保必要的文件存在
+        # --- 0. 基础检查 ---
         if not video_in or not os.path.exists(video_in):
-            self.upload_page.setStep("视频文件不存在")
+            if hasattr(self, "upload_page"): self.upload_page.setStep("错误：视频文件不存在")
             return
         if not subs_path or not os.path.exists(subs_path):
-            self.upload_page.setStep("字幕文件不存在")
+            if hasattr(self, "upload_page"): self.upload_page.setStep("错误：字幕文件不存在")
             return
 
-        # 检查ffmpeg路径
         ffmpeg_path = getattr(self, 'ffmpeg_path', None)
-        #ffmpeg_path="C:/ProgramData/miniconda3/envs/nicksub/Library/bin/ffmpeg.exe"
         if not ffmpeg_path or not os.path.exists(ffmpeg_path):
-            # 尝试在resources/bin目录下查找ffmpeg
             ffmpeg_path = os.path.join(os.path.dirname(__file__), "resources", "bin", "ffmpeg.exe")
-            if not os.path.exists(ffmpeg_path):
-                self.upload_page.setStep("未找到FFmpeg，请确保已正确安装")
-                return
+            if not os.path.exists(ffmpeg_path): ffmpeg_path = "ffmpeg"
 
-        # 1. CONFIGURATION
-        ZH_FAM = "Microsoft YaHei"  # 中文字体
-        EN_FAM = "Arial"  # 英文字体
-
-        # Font Size Factors
-        EN_FS_FACTOR = 0.060
-        ZH_FS_FACTOR = 0.085
-
-        # BAR CONFIGURATION
-        # Height of the black bar as a percentage of video height (e.g., 0.15 = 15%)
-        BAR_HEIGHT_RATIO = 0.2
-        # Opacity of the black bar (0.0 to 1.0). 0.6 is 60% visible.
-        BAR_OPACITY = 0.7
-
-        CN_RE = re.compile(r"[\u4e00-\u9fff]")
-
-        # 2. Helper: Get Video Dimensions
-        def _get_video_size(path: str):
+        # --- 1. 获取视频信息 ---
+        def _get_video_info(path):
             try:
                 ffprobe_path = ffmpeg_path.replace("ffmpeg.exe", "ffprobe.exe")
-                if not os.path.exists(ffprobe_path):
+                if not os.path.exists(ffprobe_path) and "ffmpeg" not in ffprobe_path:
                     ffprobe_path = "ffprobe"
-                probe_cmd = [ffprobe_path, "-v", "error", "-select_streams", "v:0",
-                             "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", path]
+
+                cmd_size = [ffprobe_path, "-v", "error", "-select_streams", "v:0",
+                            "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", path]
                 si = subprocess.STARTUPINFO()
                 si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                out = subprocess.check_output(probe_cmd, startupinfo=si, text=True).strip()
-                w, h = map(int, out.split("x"))
-                return w, h
-            except Exception as e:
-                print(f"Probe error: {e}")
-                return 1920, 1080
+                out_size = subprocess.check_output(cmd_size, startupinfo=si, text=True).strip()
+                w, h = map(int, out_size.split("x"))
 
-        # 3. Helper: Build ASS (Text Only - No Box Here)
+                cmd_dur = [ffprobe_path, "-v", "error", "-show_entries", "format=duration", "-of",
+                           "default=noprint_wrappers=1:nokey=1", path]
+                out_dur = subprocess.check_output(cmd_dur, startupinfo=si, text=True).strip()
+                return w, h, float(out_dur)
+            except:
+                return 1920, 1080, 1.0
+
+        video_w, video_h, video_duration = _get_video_info(video_in)
+
+        # 【核心修正 1】定义短边基准
+        # 无论是 1920x1080 还是 1080x1920，min_dim 都是 1080
+        min_dim = min(video_w, video_h)
+
+        # ==========================================
+        # === 核心参数配置区 ===
+        # ==========================================
+
+        # 1. 字号设置 (基于短边)
+        ZH_SCALE = 0.078
+        EN_SCALE = 0.045
+
+        # 2. 整体向上抬高的距离 (Lift)
+        # 【核心修正 2】改为基于 min_dim (短边) 计算
+        # 这样竖屏时就不会抬高得太离谱
+        lift_ratio = 0.05
+        lift_h = int(min_dim * lift_ratio)
+
+        # 3. 字幕在黑条内部的微调
+        # 【核心修正 3】改为基于 min_dim (短边) 计算
+        text_inner_padding = int(min_dim * 0.02)
+
+        # 计算出的 ASS MarginV (距离屏幕底部的总距离)
+        ass_margin_v = lift_h + text_inner_padding
+
+        # 计算出的字号像素值
+        zh_fs = max(24, int(min_dim * ZH_SCALE))
+        en_fs = max(16, int(min_dim * EN_SCALE))
+
+        # --- 2. ASS 生成逻辑 ---
+        temp_ass_path = os.path.join(os.path.dirname(video_in), f"temp_style_{uuid.uuid4().hex[:6]}.ass")
+
         def _build_ass(src_srt, output_ass, w, h):
             try:
                 import pysubs2
             except ImportError:
-                # 如果pysubs2不可用，直接使用原始字幕文件
-                return src_srt
+                return src_srt, 2
 
             subs = pysubs2.load(src_srt)
             subs.info["PlayResX"] = str(w)
             subs.info["PlayResY"] = str(h)
             subs.info["WrapStyle"] = "1"
 
-            # --- STYLE DEFINITION (Text Only) ---
             if "Default" in subs.styles:
                 style = subs.styles["Default"]
             else:
@@ -1103,129 +1121,149 @@ class MainWindow(QtWidgets.QMainWindow):
                 subs.styles["Default"] = style
 
             style.fontname = "Arial"
-            style.fontsize = 20
+            style.fontsize = en_fs
+            style.borderstyle = 1
+            style.outline = 2.0
+            style.shadow = 0
+            style.alignment = 2
 
-            # REVERT TO NORMAL TEXT (No Box in the font style)
-            style.borderstyle = 1  # 1 = Normal Outline
-            style.outlinecolor = "&H000000"  # Black Outline for readability
-            style.outline = 2.2  # Thin outline
-            style.shadow = 1.7
+            # 应用计算好的 MarginV
+            style.marginv = ass_margin_v
+            style.marginl = style.marginr = int(min_dim * 0.02)
 
-            style.alignment = 2  # Bottom Center
-            style.marginl = style.marginr = 10
-            style.marginv = 2  # Position text slightly up from bottom
+            ZH_COLOR_ASS = "&H00C3FF"
+            EN_COLOR_ASS = "&H00FFFFFF"
+            ZH_FONT = "Microsoft YaHei"
+            EN_FONT = "Arial"
 
-            ZH_COLOR = "&H00C3FF"  # Yellow/Cyan (BGR)
-            EN_COLOR = "&H00FFFFFF"  # White (BGR)
+            # 智能折行
+            def _smart_break(text, font_size, max_video_width):
+                if not text: return ""
+                is_vertical = h > w
+                safe_ratio = 0.94 if is_vertical else 0.98
+                safe_width = max_video_width * safe_ratio
+                char_width = font_size * 1.0
+                chars_per_line = int(safe_width / char_width)
+                if chars_per_line < 1: chars_per_line = 1
+
+                if len(text) <= chars_per_line:
+                    return text
+
+                parts = []
+                for i in range(0, len(text), chars_per_line):
+                    parts.append(text[i:i + chars_per_line])
+                return r"\N".join(parts)
+
+            max_line_count_global = 1
+            CN_RE = re.compile(r"[\u4e00-\u9fff]")
 
             for ev in subs:
                 ev.style = "Default"
                 clean_text = re.sub(r"\{.*?\}", "", ev.text)
-                lines = re.split(r"\\[Nn]|\n", clean_text.strip())
+                raw_lines = re.split(r"\\[Nn]|\n", clean_text.strip())
 
-                if len(lines) >= 2:
-                    en_fs = max(16, int(h * EN_FS_FACTOR))
-                    zh_fs = max(26, int(h * ZH_FS_FACTOR))
-                    en_line = fr"{{\fn{EN_FAM}\fs{en_fs}\b0\c{EN_COLOR}}}{lines[0]}"
-                    zh_line = fr"{{\fn{ZH_FAM}\fs{zh_fs}\b1\c{ZH_COLOR}}}{lines[1]}"
-                    ev.text = en_line + r"\N" + zh_line
-                elif len(lines) == 1:
-                    is_cn = bool(CN_RE.search(lines[0]))
-                    fam = ZH_FAM if is_cn else EN_FAM
-                    fs = max(26, int(h * ZH_FS_FACTOR)) if is_cn else max(16, int(h * EN_FS_FACTOR))
-                    color = ZH_COLOR if is_cn else EN_COLOR
-                    ev.text = fr"{{\fn{fam}\fs{fs}\b1\c{color}}}{lines[0]}"
+                final_text = ""
+                lines_this_event = 0
+
+                if len(raw_lines) >= 2:
+                    en_part = raw_lines[0]
+                    zh_part = raw_lines[1]
+                    zh_processed = _smart_break(zh_part, zh_fs, w)
+                    lines_this_event = 1 + zh_processed.count(r"\N") + 1
+                    line1 = fr"{{\fn{EN_FONT}\fs{en_fs}\b0\c{EN_COLOR_ASS}}}{en_part}"
+                    line2 = fr"{{\fn{ZH_FONT}\fs{zh_fs}\b1\c{ZH_COLOR_ASS}}}{zh_processed}"
+                    final_text = line1 + r"\N" + line2
+
+                elif len(raw_lines) == 1:
+                    content = raw_lines[0]
+                    if CN_RE.search(content):
+                        processed = _smart_break(content, zh_fs, w)
+                        lines_this_event = processed.count(r"\N") + 1
+                        final_text = fr"{{\fn{ZH_FONT}\fs{zh_fs}\b1\c{ZH_COLOR_ASS}}}{processed}"
+                    else:
+                        lines_this_event = 1
+                        final_text = fr"{{\fn{EN_FONT}\fs{en_fs}\b0\c{EN_COLOR_ASS}}}{content}"
+
+                ev.text = final_text
+                if lines_this_event > max_line_count_global:
+                    max_line_count_global = lines_this_event
 
             subs.save(output_ass)
-            return output_ass
+            return output_ass, max_line_count_global
 
-        # --- EXECUTION ---
-        def _video_output_path_for(src: str) -> str:
-            """生成输出视频路径"""
-            from config.settings import VIDEO_RESULT_DIR
-            os.makedirs(VIDEO_RESULT_DIR, exist_ok=True)
-
-            base_name = os.path.splitext(os.path.basename(src))[0]
-            return os.path.join(VIDEO_RESULT_DIR, f"{base_name}_subtitled.mp4")
-
-        out_path = _video_output_path_for(video_in)
-        temp_ass_path = os.path.join(os.path.dirname(out_path), f"temp_style_{uuid.uuid4().hex[:6]}.ass")
-
-        # 1. Get size and build the text subtitles
-        video_w, video_h = 1920, 1080
         try:
-            video_w, video_h = _get_video_size(video_in)
-            processed_subs_path = _build_ass(subs_path, temp_ass_path, video_w, video_h)
+            ass_path, max_lines = _build_ass(subs_path, temp_ass_path, video_w, video_h)
         except Exception as e:
-            print(f"Style gen failed: {e}")
-            processed_subs_path = subs_path
+            ass_path = subs_path
+            max_lines = 2
 
-        # 2. Escape paths for FFmpeg
+        # ==========================================
+        # === 3. 动态黑条计算 ===
+        # ==========================================
+
+        # 根据字幕行数决定黑条高度比例
+        if max_lines == 1:
+            bar_ratio_final = 0.12
+        else:
+            bar_ratio_final = 0.20
+
+        # 【核心修正 4】计算黑条高度时，必须乘以 min_dim (短边)
+        # 之前是乘 video_h，导致竖屏时黑条巨大。
+        # 现在改成乘 min_dim，保证黑条高度和字号是匹配的。
+        bar_h = int(min_dim * bar_ratio_final)
+
+        bar_opacity = 0.65
+
         def _escape_path(p):
             p = os.path.abspath(p).replace("\\", "/")
             p = p.replace(":", r"\:")
             return p
 
-        ass_filter_path = _escape_path(processed_subs_path)
+        ass_path_escaped = _escape_path(ass_path)
 
-        # 3. CALCULATE BAR DIMENSIONS
-        bar_height = int(video_h * BAR_HEIGHT_RATIO)
-
-        # 4. BUILD FFMPEG FILTER CHAIN
-        # Filter A: Draw the black box (drawbox)
-        # Filter B: Draw the text (ass)
-        # Syntax: drawbox=...,ass=...
+        # 计算 drawbox y坐标
+        # 注意：这里的 video_h 不能改，因为这是画布的绝对坐标
+        box_top_y = video_h - bar_h - lift_h
 
         drawbox_filter = (
-            f"drawbox=x=0:y=ih-{bar_height}:w=iw:h={bar_height}:"
-            f"color=black@{BAR_OPACITY}:t=fill"
+            f"drawbox=x=0:y={box_top_y}:w=iw:h={bar_h}:"
+            f"color=black@{bar_opacity}:t=fill"
         )
+        subtitle_filter = f"ass='{ass_path_escaped}'"
+        full_filter = f"{drawbox_filter},{subtitle_filter}"
 
-        subtitle_filter = f"ass='{ass_filter_path}'"
-
-        # Combine filters with a comma
-        vf = f"{drawbox_filter},{subtitle_filter}"
+        from config.settings import VIDEO_RESULT_DIR
+        os.makedirs(VIDEO_RESULT_DIR, exist_ok=True)
+        base_name = os.path.splitext(os.path.basename(video_in))[0]
+        out_path = os.path.join(VIDEO_RESULT_DIR, f"{base_name}_subtitled.mp4")
 
         args = [
             "-y", "-i", video_in,
-            "-vf", vf,
+            "-vf", full_filter,
             "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
             "-c:a", "copy",
             out_path
         ]
 
-        # --- Standard Progress & Run Code ---
-        self._burn_total = 0
-        try:
-            ffprobe_path = ffmpeg_path.replace("ffmpeg.exe", "ffprobe.exe")
-            if not os.path.exists(ffprobe_path):
-                ffprobe_path = "ffprobe"
-            cmd = [ffprobe_path, "-v", "error", "-show_entries", "format=duration", "-of",
-                   "default=noprint_wrappers=1:nokey=1", video_in]
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            self._burn_total = float(subprocess.check_output(cmd, startupinfo=si).strip())
-        except:
-            pass
-
+        # --- 4. 执行 ---
         self._burnProc = QProcess(self)
         self._burnProc.setProcessChannelMode(QProcess.MergedChannels)
+        self._burn_total = video_duration
 
         def _on_burn_output():
             if not hasattr(self, "_last_burn_update"): self._last_burn_update = 0
             now = time.time()
-            if now - self._last_burn_update < 1: return
+            if now - self._last_burn_update < 0.5: return
             self._last_burn_update = now
             try:
                 chunk = bytes(self._burnProc.readAllStandardOutput()).decode(errors="ignore")
+                m = re.search(r"time=(\d+):(\d+):(\d+\.?\d*)", chunk)
+                if m:
+                    cur_sec = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+                    pct = min(int(cur_sec / (self._burn_total or 1) * 100), 99)
+                    if hasattr(self, "upload_page"): self.upload_page.setProgress(pct)
             except:
-                return
-            m = re.search(r"time=(\d+):(\d+):(\d+\.?\d*)", chunk)
-            if m:
-                cur_sec = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
-                total = self._burn_total or 1
-                pct = min(int(cur_sec / total * 100), 99)
-                if hasattr(self, "upload_page"): self.upload_page.setProgress(pct)
+                pass
 
         def _on_burn_done(code, _status):
             if os.path.exists(temp_ass_path) and temp_ass_path != subs_path:
@@ -1233,29 +1271,299 @@ class MainWindow(QtWidgets.QMainWindow):
                     os.remove(temp_ass_path)
                 except:
                     pass
-
-            ok = (code == 0 and os.path.exists(out_path))
-            if ok:
+            if code == 0 and os.path.exists(out_path):
+                from ui.components import notify
                 notify(self, f"完成：{os.path.basename(out_path)}")
                 if hasattr(self, "upload_page"):
                     self.upload_page.enableResultButtons(video_ok=True, subs_ok=True)
                     self.upload_page.setProgress(100)
                     self.upload_page.setStep("任务全部完成！")
             else:
-                notify(self, "合成失败")
                 if hasattr(self, "upload_page"): self.upload_page.setStep("合成视频失败")
-
             if self._burnProc:
                 self._burnProc.deleteLater()
                 self._burnProc = None
 
         self._burnProc.readyReadStandardOutput.connect(_on_burn_output)
         self._burnProc.finished.connect(_on_burn_done)
-        self._burnProc.start(ffmpeg_path, args)
 
         if hasattr(self, "upload_page"):
-            self.upload_page.setStep("正在绘制背景并合成视频...")
+            self.upload_page.setStep("正在渲染字幕...")
             self.upload_page.setProgress(0)
+
+        self._burnProc.start(ffmpeg_path, args)
+
+
+    # def _embed_subtitles(self, video_in: str, subs_path: str):
+    #     """
+    #     嵌入字幕到视频中 (紧致极限版)
+    #     特性：字号极大、边距极窄、黑条紧贴文字、拒绝大黑框
+    #     """
+    #     import subprocess
+    #     import re
+    #     import uuid
+    #     import time
+    #     from PyQt5.QtCore import QProcess
+    #
+    #     # --- 0. 基础检查 ---
+    #     if not video_in or not os.path.exists(video_in):
+    #         if hasattr(self, "upload_page"): self.upload_page.setStep("错误：视频文件不存在")
+    #         return
+    #     if not subs_path or not os.path.exists(subs_path):
+    #         if hasattr(self, "upload_page"): self.upload_page.setStep("错误：字幕文件不存在")
+    #         return
+    #
+    #     ffmpeg_path = getattr(self, 'ffmpeg_path', None)
+    #     if not ffmpeg_path or not os.path.exists(ffmpeg_path):
+    #         ffmpeg_path = os.path.join(os.path.dirname(__file__), "resources", "bin", "ffmpeg.exe")
+    #         if not os.path.exists(ffmpeg_path): ffmpeg_path = "ffmpeg"
+    #
+    #     # --- 1. 获取视频信息 ---
+    #     def _get_video_info(path):
+    #         try:
+    #             ffprobe_path = ffmpeg_path.replace("ffmpeg.exe", "ffprobe.exe")
+    #             if not os.path.exists(ffprobe_path) and "ffmpeg" not in ffprobe_path:
+    #                 ffprobe_path = "ffprobe"
+    #
+    #             cmd_size = [ffprobe_path, "-v", "error", "-select_streams", "v:0",
+    #                         "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", path]
+    #             si = subprocess.STARTUPINFO()
+    #             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    #             out_size = subprocess.check_output(cmd_size, startupinfo=si, text=True).strip()
+    #             w, h = map(int, out_size.split("x"))
+    #
+    #             cmd_dur = [ffprobe_path, "-v", "error", "-show_entries", "format=duration", "-of",
+    #                        "default=noprint_wrappers=1:nokey=1", path]
+    #             out_dur = subprocess.check_output(cmd_dur, startupinfo=si, text=True).strip()
+    #             return w, h, float(out_dur)
+    #         except:
+    #             return 1920, 1080, 1.0
+    #
+    #     video_w, video_h, video_duration = _get_video_info(video_in)
+    #
+    #     # === 核心计算：在这里确定所有尺寸，后续全部引用这些变量 ===
+    #     min_dim = min(video_w, video_h)
+    #
+    #     # 【修改1】字号极大化：从0.065提升到0.078 (极大)
+    #     ZH_SCALE = 0.090
+    #     EN_SCALE = 0.045  # 英文保持适中，以免抢镜
+    #
+    #     # 计算具体像素值
+    #     zh_fs = max(24, int(min_dim * ZH_SCALE))
+    #     en_fs = max(16, int(min_dim * EN_SCALE))
+    #
+    #     # 【修改2】计算黑条的基础留白 (上下各留的一点点缝隙)
+    #     # 设为视频高度的 1.5%，非常紧凑
+    #     bar_padding_vertical = int(video_h * 0.015)
+    #
+    #     # --- 2. ASS 生成逻辑 ---
+    #     temp_ass_path = os.path.join(os.path.dirname(video_in), f"temp_style_{uuid.uuid4().hex[:6]}.ass")
+    #
+    #     def _build_ass(src_srt, output_ass, w, h):
+    #         try:
+    #             import pysubs2
+    #         except ImportError:
+    #             return src_srt, 2
+    #
+    #         subs = pysubs2.load(src_srt)
+    #         subs.info["PlayResX"] = str(w)
+    #         subs.info["PlayResY"] = str(h)
+    #         subs.info["WrapStyle"] = "1"
+    #
+    #         if "Default" in subs.styles:
+    #             style = subs.styles["Default"]
+    #         else:
+    #             style = pysubs2.SSAStyle()
+    #             subs.styles["Default"] = style
+    #
+    #         style.fontname = "Arial"
+    #         style.fontsize = en_fs
+    #         style.borderstyle = 1
+    #         style.outline = 2.0
+    #         style.shadow = 0  # 去掉阴影，让黑条更干净
+    #         style.alignment = 2
+    #
+    #         # 【修改3】字幕距离底部的距离 = 黑条内的下留白
+    #         #style.marginv = bar_padding_vertical
+    #         style.marginv = int(h * 0.025)
+    #         style.marginl = style.marginr = int(min_dim * 0.01)  # 左右极窄边距
+    #
+    #         ZH_COLOR_ASS = "&H00C3FF"
+    #         EN_COLOR_ASS = "&H00FFFFFF"
+    #         ZH_FONT = "Microsoft YaHei"
+    #         EN_FONT = "Arial"
+    #
+    #         # 智能折行（极限版）
+    #         # 智能折行（极限版：修正“多一字换行”问题）
+    #         def _smart_break(text, font_size, max_video_width):
+    #             if not text: return ""
+    #
+    #             # 【核心修改区 START】 --------------------------
+    #             # 1. 判断是竖屏还是横屏 (h 和 w 来自外层函数变量)
+    #             is_vertical = h > w
+    #
+    #             # 2. 设置安全比例
+    #             # 竖屏 (h>w): 给 0.94 (保留 6% 边距)，防止手机边缘遮挡
+    #             # 横屏 (w>h): 给 0.98 (保留 2% 边距)，几乎撑满屏幕，解决"第二行只有一个字"的尴尬
+    #             safe_ratio = 0.94 if is_vertical else 0.98
+    #
+    #             # 3. 计算安全宽度
+    #             safe_width = max_video_width * safe_ratio
+    #             # 【核心修改区 END】 ----------------------------
+    #
+    #             # 估算字宽：1.0 倍 (紧凑计算)
+    #             # 如果你发现还是容易换行，可以把 1.0 改成 0.95 (但这可能会导致极个别字贴边)
+    #             char_width = font_size * 1.0
+    #
+    #             chars_per_line = int(safe_width / char_width)
+    #             if chars_per_line < 1: chars_per_line = 1
+    #
+    #             if len(text) <= chars_per_line:
+    #                 return text
+    #
+    #             parts = []
+    #             for i in range(0, len(text), chars_per_line):
+    #                 parts.append(text[i:i + chars_per_line])
+    #             return r"\N".join(parts)
+    #
+    #         max_line_count_global = 1
+    #         CN_RE = re.compile(r"[\u4e00-\u9fff]")
+    #
+    #         for ev in subs:
+    #             ev.style = "Default"
+    #             clean_text = re.sub(r"\{.*?\}", "", ev.text)
+    #             raw_lines = re.split(r"\\[Nn]|\n", clean_text.strip())
+    #
+    #             final_text = ""
+    #             lines_this_event = 0
+    #
+    #             if len(raw_lines) >= 2:
+    #                 # 双语：英 + 中
+    #                 en_part = raw_lines[0]
+    #                 zh_part = raw_lines[1]
+    #                 zh_processed = _smart_break(zh_part, zh_fs, w)
+    #
+    #                 zh_lines_num = zh_processed.count(r"\N") + 1
+    #                 lines_this_event = 1 + zh_lines_num
+    #
+    #                 line1 = fr"{{\fn{EN_FONT}\fs{en_fs}\b0\c{EN_COLOR_ASS}}}{en_part}"
+    #                 line2 = fr"{{\fn{ZH_FONT}\fs{zh_fs}\b1\c{ZH_COLOR_ASS}}}{zh_processed}"
+    #                 final_text = line1 + r"\N" + line2
+    #
+    #             elif len(raw_lines) == 1:
+    #                 # 单语
+    #                 content = raw_lines[0]
+    #                 if CN_RE.search(content):
+    #                     # 中文单语
+    #                     processed = _smart_break(content, zh_fs, w)
+    #                     lines_this_event = processed.count(r"\N") + 1
+    #                     final_text = fr"{{\fn{ZH_FONT}\fs{zh_fs}\b1\c{ZH_COLOR_ASS}}}{processed}"
+    #                 else:
+    #                     # 英文单语
+    #                     lines_this_event = 1
+    #                     final_text = fr"{{\fn{EN_FONT}\fs{en_fs}\b0\c{EN_COLOR_ASS}}}{content}"
+    #
+    #             ev.text = final_text
+    #             if lines_this_event > max_line_count_global:
+    #                 max_line_count_global = lines_this_event
+    #
+    #         subs.save(output_ass)
+    #         return output_ass, max_line_count_global
+    #
+    #     try:
+    #         ass_path, max_lines = _build_ass(subs_path, temp_ass_path, video_w, video_h)
+    #     except Exception as e:
+    #         ass_path = subs_path
+    #         max_lines = 2
+    #
+    #     # --- 3. 精确计算黑条高度 (The Precision Logic) ---
+    #
+    #     # 不再根据行数计算，强制固定为视频高度的 20%
+    #     # 这样黑条高度看起来统一，且通常足够容纳两行大字幕
+    #     bar_h = int(video_h * 0.2)
+    #
+    #     # 透明度设置 (0.65 比较适中，0.7 会更黑一点)
+    #     bar_opacity = 0.65
+    #
+    #
+    #
+    #     # --- 4. FFmpeg 命令 ---
+    #     def _escape_path(p):
+    #         p = os.path.abspath(p).replace("\\", "/")
+    #         p = p.replace(":", r"\:")
+    #         return p
+    #
+    #     ass_path_escaped = _escape_path(ass_path)
+    #
+    #     drawbox_filter = (
+    #         f"drawbox=x=0:y=ih-{bar_h}:w=iw:h={bar_h}:"
+    #         f"color=black@{bar_opacity}:t=fill"
+    #     )
+    #     subtitle_filter = f"ass='{ass_path_escaped}'"
+    #     full_filter = f"{drawbox_filter},{subtitle_filter}"
+    #
+    #     from config.settings import VIDEO_RESULT_DIR
+    #     os.makedirs(VIDEO_RESULT_DIR, exist_ok=True)
+    #     base_name = os.path.splitext(os.path.basename(video_in))[0]
+    #     out_path = os.path.join(VIDEO_RESULT_DIR, f"{base_name}_subtitled.mp4")
+    #
+    #     args = [
+    #         "-y", "-i", video_in,
+    #         "-vf", full_filter,
+    #         "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
+    #         "-c:a", "copy",
+    #         out_path
+    #     ]
+    #
+    #     # --- 5. 执行 ---
+    #     self._burnProc = QProcess(self)
+    #     self._burnProc.setProcessChannelMode(QProcess.MergedChannels)
+    #     self._burn_total = video_duration
+    #
+    #     def _on_burn_output():
+    #         if not hasattr(self, "_last_burn_update"): self._last_burn_update = 0
+    #         now = time.time()
+    #         if now - self._last_burn_update < 0.5: return
+    #         self._last_burn_update = now
+    #         try:
+    #             chunk = bytes(self._burnProc.readAllStandardOutput()).decode(errors="ignore")
+    #             m = re.search(r"time=(\d+):(\d+):(\d+\.?\d*)", chunk)
+    #             if m:
+    #                 cur_sec = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    #                 pct = min(int(cur_sec / (self._burn_total or 1) * 100), 99)
+    #                 if hasattr(self, "upload_page"): self.upload_page.setProgress(pct)
+    #         except:
+    #             pass
+    #
+    #     def _on_burn_done(code, _status):
+    #         if os.path.exists(temp_ass_path) and temp_ass_path != subs_path:
+    #             try:
+    #                 os.remove(temp_ass_path)
+    #             except:
+    #                 pass
+    #         if code == 0 and os.path.exists(out_path):
+    #             from ui.components import notify
+    #             notify(self, f"完成：{os.path.basename(out_path)}")
+    #             if hasattr(self, "upload_page"):
+    #                 self.upload_page.enableResultButtons(video_ok=True, subs_ok=True)
+    #                 self.upload_page.setProgress(100)
+    #                 self.upload_page.setStep("任务全部完成！")
+    #         else:
+    #             if hasattr(self, "upload_page"): self.upload_page.setStep("合成视频失败")
+    #         if self._burnProc:
+    #             self._burnProc.deleteLater()
+    #             self._burnProc = None
+    #
+    #     self._burnProc.readyReadStandardOutput.connect(_on_burn_output)
+    #     self._burnProc.finished.connect(_on_burn_done)
+    #
+    #     if hasattr(self, "upload_page"):
+    #         self.upload_page.setStep("正在渲染字幕...")
+    #         self.upload_page.setProgress(0)
+    #
+    #     self._burnProc.start(ffmpeg_path, args)
+
+
 
     def _open_subs_location(self):
         """打开字幕结果目录"""
