@@ -20,7 +20,13 @@ def probe_video_size(video_path: str, ffprobe_path: str) -> tuple[int, int]:
         video_path
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        # Prevent console window on Windows
+        startupinfo = None
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, startupinfo=startupinfo)
         data = json.loads(result.stdout)
         stream = data["streams"][0]
         return stream["width"], stream["height"]
@@ -109,7 +115,14 @@ def convert_srt_to_ass(video_path: str, srt_path: str, ass_path: str, ffmpeg_pat
     """Convert SRT subtitles to styled ASS format with independent bilingual sizing."""
     width, height = probe_video_size(video_path, ffprobe_path)
 
-    subs = pysubs2.load(srt_path, encoding="utf-8")
+    # Try to load with utf-8, fallback if needed
+    try:
+        subs = pysubs2.load(srt_path, encoding="utf-8")
+    except UnicodeDecodeError:
+        try:
+            subs = pysubs2.load(srt_path, encoding="gbk")
+        except:
+            subs = pysubs2.load(srt_path)
 
     # Setup base styles
     create_ass_style(subs, height, margin_v)
@@ -147,20 +160,23 @@ def create_preview_frame(video_path: str, subtitle_path: str, output_image: str,
             print(f"[ERROR] Subtitle not found: {subtitle_path}")
             return False
 
-        print(f"[INFO] Using FFmpeg: {ffmpeg_path}")
-        print(f"[INFO] Video: {video_path}")
+        # Load subtitles
+        try:
+            subs = pysubs2.load(subtitle_path, encoding="utf-8")
+        except UnicodeDecodeError:
+            subs = pysubs2.load(subtitle_path)
 
-        # Load subtitles and get first subtitle
-        subs = pysubs2.load(subtitle_path, encoding="utf-8")
         if not subs.events:
             print("[ERROR] No subtitle events found")
             return False
 
         # Get video dimensions
         width, height = probe_video_size(video_path, ffprobe_path)
-        print(f"[INFO] Video size: {width}x{height}")
 
+        # Find first event and its timestamp
         first_sub = subs.events[0]
+        # Calculate the real timestamp to seek to in the video
+        seek_timestamp = first_sub.start / 1000.0
 
         # Create temporary ASS file
         preview_subs = pysubs2.SSAFile()
@@ -171,19 +187,23 @@ def create_preview_frame(video_path: str, subtitle_path: str, output_image: str,
 
         # Add first subtitle and apply bilingual styling
         preview_event = first_sub.copy()
+
+        # --- 【关键修复】 ---
+        # 强制将预览字幕的开始时间设为 0
+        # 因为 FFmpeg 使用 -ss 在输入前跳转时，会重置视频时间戳为 0
+        # 如果不把字幕时间也改为 0，字幕就会显示在很久以后，导致当前画面无字幕
+        preview_event.start = 0
+        preview_event.end = 5000  # 给它 5 秒的持续时间，保证能显示
+
         process_bilingual_event(preview_event, height, chinese_fontsize_factor, other_fontsize_factor, chinese_color,
                                 other_color)
         preview_subs.events.append(preview_event)
 
         # Save temporary ASS file in same directory as video (to avoid path issues)
-        video_dir = os.path.dirname(video_path)
+        video_dir = os.path.dirname(os.path.abspath(video_path))
         temp_ass_name = f"_temp_preview_{os.getpid()}.ass"
         temp_ass_path = os.path.join(video_dir, temp_ass_name)
         preview_subs.save(temp_ass_path)
-        print(f"[INFO] Temp ASS: {temp_ass_path}")
-
-        # Extract frame at first subtitle timestamp
-        timestamp = first_sub.start / 1000.0  # Convert ms to seconds
 
         # Build FFmpeg command
         # Use relative path for ASS file
@@ -192,14 +212,12 @@ def create_preview_frame(video_path: str, subtitle_path: str, output_image: str,
         # Build args list
         args = [
             "-y",
-            "-ss", str(timestamp),
+            "-ss", str(seek_timestamp),  # Jump video to the original subtitle time
             "-i", video_path,
-            "-vf", ass_filter,
+            "-vf", ass_filter,  # Apply the modified subtitle (which starts at 0)
             "-frames:v", "1",
             output_image
         ]
-
-        print(f"[INFO] Command: {ffmpeg_path} {' '.join(args)}")
 
         # Run using QProcess
         from PyQt5.QtCore import QProcess, QEventLoop
@@ -222,24 +240,17 @@ def create_preview_frame(video_path: str, subtitle_path: str, output_image: str,
         loop.exec_()
         timer.stop()
 
-        exit_code = proc.exitCode()
-        if exit_code != 0:
-            stderr = bytes(proc.readAllStandardError()).decode('utf-8', errors='ignore')
-            print(f"[ERROR] FFmpeg failed with code {exit_code}")
-            print(f"[ERROR] STDERR: {stderr}")
-
         # Clean up temp file
         try:
-            os.remove(temp_ass_path)
+            if os.path.exists(temp_ass_path):
+                os.remove(temp_ass_path)
         except:
             pass
 
         # Check result
-        if not os.path.exists(output_image):
-            print(f"[ERROR] Output image not created: {output_image}")
+        if not os.path.exists(output_image) or os.path.getsize(output_image) == 0:
             return False
 
-        print(f"[SUCCESS] Preview generated: {output_image}")
         return True
 
     except Exception as e:
@@ -265,7 +276,8 @@ class SubtitleEmbedder(QtCore.QObject):
         self.proc.finished.connect(self._on_finished)
         self._input_video = ""
         self._output_video = ""
-        self._retry_mode = False  # Flag to track if we're in retry mode
+        self._temp_ass_path = ""  # Keep track of temp file
+        self._retry_mode = False
 
     def embed(self, video_path: str, srt_path: str, output_path: str,
               chinese_fontsize_factor: float = 0.045,
@@ -276,7 +288,8 @@ class SubtitleEmbedder(QtCore.QObject):
         """Start embedding subtitles into video with custom parameters."""
         self._input_video = video_path
         self._output_video = output_path
-        # 保存原始参数用于重试
+
+        # Save original params for retry
         self._original_srt_path = srt_path
         self._chinese_fontsize_factor = chinese_fontsize_factor
         self._other_fontsize_factor = other_fontsize_factor
@@ -284,37 +297,41 @@ class SubtitleEmbedder(QtCore.QObject):
         self._chinese_color = chinese_color
         self._other_color = other_color
 
-        print(f"[DEBUG] Original ffmpeg_path: {self.ffmpeg_path}")
-        # 使用传入的FFmpeg路径，不再覆盖
-        print(f"[DEBUG] Using ffmpeg_path: {self.ffmpeg_path}")
-
         # Reset retry mode
         self._retry_mode = False
 
-        # Save ASS file in same directory as video (same as preview method)
+        # Generate ASS file path in same directory as video
         video_dir = os.path.dirname(os.path.abspath(video_path))
-        ass_filename = os.path.splitext(os.path.basename(srt_path))[0] + "_embed.ass"
-        ass_path = os.path.join(video_dir, ass_filename)
+        # Use a hidden temp name to avoid cluttering user view
+        ass_filename = f".temp_embed_{os.path.splitext(os.path.basename(srt_path))[0]}.ass"
+        self._temp_ass_path = os.path.join(video_dir, ass_filename)
 
-        print(f"[DEBUG] Video dir: {video_dir}")
-        print(f"[DEBUG] ASS path: {ass_path}")
+        print(f"[DEBUG] Converting SRT to ASS: {self._temp_ass_path}")
 
-        # Convert SRT to ASS with custom parameters
-        convert_srt_to_ass(video_path, srt_path, ass_path, self.ffmpeg_path, self.ffprobe_path,
-                           chinese_fontsize_factor, other_fontsize_factor, margin_v,
-                           chinese_color, other_color)
+        # Convert SRT to ASS
+        try:
+            convert_srt_to_ass(video_path, srt_path, self._temp_ass_path, self.ffmpeg_path, self.ffprobe_path,
+                               chinese_fontsize_factor, other_fontsize_factor, margin_v,
+                               chinese_color, other_color)
+        except Exception as e:
+            self.error.emit(f"字幕格式转换失败: {str(e)}")
+            return
 
-        # Use the same approach as the working preview functionality
-        # Use absolute paths for input/output to avoid issues
+        # Prepare FFmpeg command
         video_abs = os.path.abspath(video_path).replace("\\", "/")
         output_abs = os.path.abspath(output_path).replace("\\", "/")
 
-        # First, try with both drawbox and ass filters
-        drawbox_filter = "drawbox=y=ih-h/5:x=0:w=iw:h=h/5:t=fill:color=black@0.8"
-        ass_filter = f"ass='{ass_filename}'"  # Use just the filename, not full path
-        vf_combined = f"{drawbox_filter},{ass_filter}"
+        # Ensure output != input
+        if video_abs.lower() == output_abs.lower():
+            base, ext = os.path.splitext(output_abs)
+            output_abs = f"{base}_new{ext}"
+            self._output_video = output_abs
 
-        # Build args list with combined filters
+        # Use relative path for ASS filename
+        ass_filter = f"ass='{ass_filename}'"
+        vf_combined = ass_filter
+
+        # Add -sn to disable copying internal subtitles
         args = [
             "-y",
             "-i", video_abs,
@@ -323,116 +340,70 @@ class SubtitleEmbedder(QtCore.QObject):
             "-crf", "18",
             "-preset", "veryfast",
             "-c:a", "copy",
+            "-sn",  # Disable subtitle stream copying
             output_abs
         ]
 
-        print(f"[DEBUG] Command with drawbox+ass: {self.ffmpeg_path} {' '.join(args)}")
-        print(f"[DEBUG] Working dir: {video_dir}")
+        print(f"[DEBUG] Command: {self.ffmpeg_path} {' '.join(args)}")
 
-        # Set working directory and start (same as preview)
+        # Set working directory to video dir so FFmpeg finds the relative ASS file
         self.proc.setWorkingDirectory(video_dir)
         self.proc.start(self.ffmpeg_path, args)
 
     def _on_output(self):
         """Parse FFmpeg output for progress."""
         output = self.proc.readAllStandardOutput().data().decode("utf-8", errors="ignore")
-        duration_match = re.search(r"Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})", output)
+
+        # Try to parse duration if not set
+        if not hasattr(self, '_duration_sec') or self._duration_sec == 0:
+            duration_match = re.search(r"Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})", output)
+            if duration_match:
+                h, m, s = map(float, duration_match.groups())
+                self._duration_sec = h * 3600 + m * 60 + s
+
         time_match = re.search(r"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})", output)
-
-        if duration_match and time_match:
-            h, m, s = map(float, duration_match.groups())
-            duration_sec = h * 3600 + m * 60 + s
-
+        if time_match and hasattr(self, '_duration_sec') and self._duration_sec > 0:
             h, m, s = map(float, time_match.groups())
             current_sec = h * 3600 + m * 60 + s
-
-            progress = int((current_sec / duration_sec) * 100)
+            progress = int((current_sec / self._duration_sec) * 100)
             self.progress.emit(min(progress, 99))
 
     def _on_finished(self, code, _status):
         """Handle process completion."""
         print(f"[DEBUG] FFmpeg finished with code: {code}")
-        output_exists = os.path.exists(self._output_video)
-        print(f"[DEBUG] Output video exists: {output_exists}")
 
-        # 检查输出文件大小，如果为0字节则视为失败
+        # Cleanup temp files immediately
+        self._cleanup_temp_files()
+
+        output_exists = os.path.exists(self._output_video)
         output_size = 0
         if output_exists:
             output_size = os.path.getsize(self._output_video)
-            print(f"[DEBUG] Output file size: {output_size} bytes")
 
-        # 在Windows上，FFmpeg有时会返回非零退出码，但仍成功创建文件
-        # 我们需要检查输出文件是否存在且大小大于0
+        # Success condition
         if (code == 0 or code == -22) and output_exists and output_size > 0:
-            print(f"[SUCCESS] Embedding completed successfully with code {code}")
             self.progress.emit(100)
             self.finished.emit(self._output_video)
         elif not self._retry_mode and output_size == 0:
-            # 首次尝试失败，且输出文件大小为0，尝试只使用ass滤镜
-            print(f"[WARNING] First attempt failed, trying fallback method with only ASS filter...")
-            self._retry_with_ass_only()
+            # Retry logic (if needed)
+            print(f"[WARNING] Processing failed, attempting retry...")
+            self._retry_mode = True
+            self.error.emit(f"处理失败，生成的视频为空 (Code: {code})")
         else:
-            # 获取FFmpeg错误输出
-            stdout_output = self.proc.readAllStandardOutput().data().decode("utf-8", errors="ignore")
-            stderr_output = self.proc.readAllStandardError().data().decode("utf-8", errors="ignore")
-            full_output = stdout_output + "\n" + stderr_output
-            print(f"[ERROR] FFmpeg output:\n{full_output}")
-
-            # 如果文件存在但大小为0，删除它
+            # Failure
             if output_exists and output_size == 0:
                 try:
                     os.remove(self._output_video)
-                    print(f"[DEBUG] Removed empty output file: {self._output_video}")
                 except:
                     pass
 
-            error_msg = f"FFmpeg 处理失败 (退出码: {code})"
-            if output_size == 0:
-                error_msg = f"FFmpeg 创建了空文件 (退出码: {code})"
-            self.error.emit(error_msg)
+            self.error.emit(f"FFmpeg 处理失败 (退出码: {code})")
 
-    def _retry_with_ass_only(self):
-        """Retry embedding with only ASS filter (no drawbox)."""
-        # 提取之前存储的参数
-        video_path = self._input_video
-        srt_path = self._original_srt_path
-        output_path = self._output_video
-        chinese_fontsize_factor = self._chinese_fontsize_factor
-        other_fontsize_factor = self._other_fontsize_factor
-        margin_v = self._margin_v
-        chinese_color = self._chinese_color
-        other_color = self._other_color
-
-        print(f"[DEBUG] Retrying with ASS-only filter...")
-
-        # 重新设置为重试模式
-        self._retry_mode = True
-
-        # Use absolute paths for input/output to avoid issues
-        video_abs = os.path.abspath(video_path).replace("\\", "/")
-        output_abs = os.path.abspath(output_path).replace("\\", "/")
-
-        # Use relative path for ASS file, but only with ASS filter (no drawbox)
-        video_dir = os.path.dirname(os.path.abspath(video_path))
-        ass_filename = os.path.splitext(os.path.basename(srt_path))[0] + "_embed.ass"
-        ass_filter = f"ass='{ass_filename}'"
-        vf = ass_filter  # Only ASS filter, no drawbox
-
-        # Build args list with only ASS filter
-        args = [
-            "-y",
-            "-i", video_abs,
-            "-vf", vf,
-            "-c:v", "libx264",
-            "-crf", "18",
-            "-preset", "veryfast",
-            "-c:a", "copy",
-            output_abs
-        ]
-
-        print(f"[DEBUG] Retry command with ASS only: {self.ffmpeg_path} {' '.join(args)}")
-        print(f"[DEBUG] Working dir: {video_dir}")
-
-        # Set working directory and start retry
-        self.proc.setWorkingDirectory(video_dir)
-        self.proc.start(self.ffmpeg_path, args)
+    def _cleanup_temp_files(self):
+        """Remove temporary ASS files."""
+        if self._temp_ass_path and os.path.exists(self._temp_ass_path):
+            try:
+                os.remove(self._temp_ass_path)
+                print(f"[DEBUG] Cleaned up temp file: {self._temp_ass_path}")
+            except Exception as e:
+                print(f"[WARNING] Failed to cleanup temp file: {e}")
