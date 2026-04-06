@@ -22,7 +22,7 @@ from ui.embed_page import EmbedSubtitlesPage
 # --- robust base dir (works in dev & PyInstaller) ---
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 
-
+#print(f"【启动日志】当前 API 地址: {DEFAULT_API_BASE}")
 def _detect_resources_dir() -> str:
     """检测resources目录位置，确保在不同分发环境下都能正确找到资源"""
     candidates = [
@@ -39,7 +39,6 @@ def _detect_resources_dir() -> str:
                 return p
             best = best or p
     return best or os.path.join(BASE_DIR, "resources")
-
 
 # 确保在加载配置之前先检测资源目录
 RESOURCES_DIR = _detect_resources_dir()
@@ -163,7 +162,8 @@ class MainWindow(QtWidgets.QMainWindow):
         API_CLIENT = self.api_client
         MAIN_WINDOW = self
 
-        self.setWindowTitle("NickSub Pro v1.1 - AI 视频翻译专家")
+        self.setWindowTitle("NickSub Pro v1.12 - AI 视频翻译专家")
+        #self.setWindowTitle("轻语---跨语言智能转译与沟通助手")
         self.resize(1100, 760)  # 修改为与nick.py一致的大小
 
         # 设置窗口图标
@@ -1081,7 +1081,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # 1. 字号设置 (基于短边)
         ZH_SCALE = 0.078
-        EN_SCALE = 0.045
+        EN_SCALE = 0.055
 
         # 2. 整体向上抬高的距离 (Lift)
         # 【核心修正 2】改为基于 min_dim (短边) 计算

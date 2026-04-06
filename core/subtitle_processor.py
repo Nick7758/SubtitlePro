@@ -83,7 +83,7 @@ def smart_wrap_text(text, fontsize_factor, is_portrait=True):
 
     # --- 中文逻辑处理部分（完全保留你之前的调优参数） ---
     # 竖屏系数 0.52，横屏系数 1.32
-    coeff = 0.52 if is_portrait else 1.32
+    coeff = 0.65 if is_portrait else 1.32
     max_units = int(coeff / fontsize_factor)
 
     lines = []

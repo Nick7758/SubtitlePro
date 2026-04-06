@@ -168,180 +168,70 @@ class VideoDownloadWorker(QtCore.QThread):
         self.output_dir = output_dir
         self.ffmpeg_path = ffmpeg_path
 
-    def _get_format_by_duration(self, duration_str):
-        """
-        根据视频时长选择下载画质：
-        - 小于 2分30秒（150秒）：最高画质 (bestvideo+bestaudio)
-        - 大于等于 2分30秒：720p (bestvideo[height<=720]+bestaudio)
-        """
-        try:
-            # 解析时长字符串为秒数
-            parts = list(map(int, duration_str.split(':')))
-            seconds = 0
-            for i, part in enumerate(reversed(parts)):
-                seconds += part * (60 ** i)
-
-            # 2分30秒 = 150秒
-            threshold = 150
-
-            if seconds < threshold:
-                self.log.emit(f"   📺 画质策略: 视频时长 {duration_str} < 2分30秒 → 使用【最高画质】")
-                return 'bestvideo+bestaudio/best'
-            else:
-                self.log.emit(f"   📺 画质策略: 视频时长 {duration_str} >= 2分30秒 → 使用【720p画质】")
-                return 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
-        except:
-            # 解析失败时默认使用720p（更安全）
-            self.log.emit(f"   📺 画质策略: 时长解析失败，使用【720p画质】")
-            return 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
-
-    def download_twitter_video(self, tweet_url, output_dir, ffmpeg_dir):
-        """
-        使用 yt-dlp 下载 Twitter 视频
-        """
-        self.log.emit(f"   📥 正在下载: {tweet_url}")
-
-        ydl_opts = {
-            'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
-            'format': 'best[ext=mp4]/best',
-            'merge_output_format': 'mp4',
-            'quiet': True,
-            'no_warnings': True,
-            'ffmpeg_location': ffmpeg_dir,
-            'retries': 5,
-            'socket_timeout': 30,
-            'progress_hooks': [self._progress_hook],
-        }
-
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # 1. 第一步：仅获取元数据 (不下载)
-                self.log.emit(f"   🕵️ 正在分析视频元数据...")
-                try:
-                    info = ydl.extract_info(tweet_url, download=False)
-                except Exception as e:
-                    self.log.emit(f"   ⚠️ 无法获取元数据: {e}")
-                    self.error.emit(f"❌ 下载出错: {e}")
-                    return
-
-                if not info:
-                    self.error.emit(f"❌ 下载出错: 无法获取信息")
-                    return
-
-                duration = info.get('duration', 0)
-
-                # 3. 第三步：通过检查，开始下载
-                self.log.emit(f"   ✅ 时长符合要求 ({duration}s)，开始下载...")
-
-                # 重新执行下载
-                ydl.download([tweet_url])
-
-                # 验证并寻找文件 (复刻原本逻辑，或者依赖 prepare_filename)
-                filename = ydl.prepare_filename(info)
-                if ffmpeg_dir and ydl_opts.get('merge_output_format'):
-                    base, _ = os.path.splitext(filename)
-                    filename = base + ".mp4"
-
-                self.log.emit(f"   ✅ 下载成功: {os.path.basename(filename)}")
-                self.progress.emit(100)
-                self.finished.emit(filename)
-
-        except Exception as e:
-            self.log.emit(f"   ❌ 下载流程异常: {e}")
-            self.error.emit(f"❌ 下载流程异常: {e}")
-
-    def download_video_only(self, video_url, base_dir, ffmpeg_dir):
-        """
-        步骤 1: 命令行复刻版 (无 Cookie + 默认策略 + 强制高清)
-        """
-        # 1. 注入 Node.js (虽然命令行没用上，但加上是双保险)
-        NODE_JS_DIR = r"D:\npm下载"
-        if os.path.exists(NODE_JS_DIR) and NODE_JS_DIR not in os.environ["PATH"]:
-            os.environ["PATH"] = NODE_JS_DIR + os.pathsep + os.environ["PATH"]
-
-        self.log.emit(f"开始处理视频 -> ...")
-
-        # 预先获取时长并转换为 duration_str
-        meta_opts = {'cookiefile': None, 'quiet': True, 'nocheckcertificate': True}
-        duration_str = "0:00"
-        try:
-            with yt_dlp.YoutubeDL(meta_opts) as ydl:
-                info_meta = ydl.extract_info(video_url, download=False)
-                if info_meta:
-                    dur_sec = info_meta.get('duration', 0)
-                    duration_str = f"{int(dur_sec // 60)}:{int(dur_sec % 60):02d}"
-        except Exception:
-            pass
-
-        # ================= 核心策略：完全复刻你的 CLI =================
-        self.log.emit(f"   🔄 正在尝试: [游客极速模式]...")
-
-        ydl_opts = {
-            'outtmpl': os.path.join(base_dir, '%(title)s.%(ext)s'),
-
-            # 【关键 1】彻底禁用 Cookie！
-            'cookiefile': None,
-
-            # 【关键 2】移除 extractor_args (不再手动指定)
-
-            # 【关键 3】格式策略：根据视频时长选择画质
-            'format': self._get_format_by_duration(duration_str),
-            'merge_output_format': 'mp4',
-
-            'cachedir': False,
-            'ffmpeg_location': ffmpeg_dir if ffmpeg_dir else None,
-            'quiet': False,
-            'noprogress': True,
-            'no_warnings': True,
-            'writesubtitles': False,
-            'retries': 10,
-            'nocheckcertificate': True,
-            'ignoreerrors': False,
-
-            # (补充 PyQt 图形化必需的回调)
-            'progress_hooks': [self._progress_hook],
-        }
-
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.cache.remove()
-
-                # 获取信息并下载
-                info = ydl.extract_info(video_url, download=True)
-
-            # === 画质报告 ===
-            if info:
-                width = info.get('width', 0)
-                height = info.get('height', 0)
-                res_str = f"{width}x{height}" if width and height else "未知"
-
-                self.log.emit(f"\n   {'=' * 30}")
-                self.log.emit(f"   🎬 最终画质报告")
-                self.log.emit(f"   {'=' * 30}")
-                self.log.emit(f"   📺 分辨率: {res_str}")
-                self.log.emit(f"   ✅ 状态:   下载成功")
-                self.log.emit(f"   {'=' * 30}\n")
-
-                filename = ydl.prepare_filename(info)
-                if ffmpeg_dir and ydl_opts.get('merge_output_format'):
-                    base, _ = os.path.splitext(filename)
-                    filename = base + "." + ydl_opts['merge_output_format']
-
-                self.log.emit(f"任务完成 | 📁: {os.path.basename(filename)} ({res_str})")
-                self.progress.emit(100)
-                self.finished.emit(filename)
-
-        except Exception as e:
-            self.error.emit(f"❌ 下载出错: {e}")
-
     def run(self):
+        # 1. Check if FFmpeg actually exists at the path
         ffmpeg_exists = os.path.exists(self.ffmpeg_path) and os.path.isfile(self.ffmpeg_path)
         ffmpeg_dir = os.path.dirname(self.ffmpeg_path) if ffmpeg_exists else None
 
-        if "twitter.com" in self.url.lower() or "x.com" in self.url.lower():
-            self.download_twitter_video(self.url, self.output_dir, ffmpeg_dir)
+        if not ffmpeg_exists:
+            self.log.emit("⚠️ 警告：未检测到 FFmpeg，将仅下载 720p (以确保有声音)...")
+
+        # 2. Configure Options
+        ydl_opts = {
+            'outtmpl': os.path.join(self.output_dir, '%(title)s.%(ext)s'),
+            'noplaylist': True,
+            'progress_hooks': [self._progress_hook],
+            'nocheckcertificate': True,
+            'ignoreerrors': False,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            }
+        }
+
+        # 3. Smart Format Selection
+        if ffmpeg_exists:
+            # If FFmpeg is found, download Best Video + Best Audio and merge them
+            ydl_opts['ffmpeg_location'] = ffmpeg_dir
+            ydl_opts['format'] = 'bestvideo+bestaudio/best'
+            ydl_opts['merge_output_format'] = 'mp4'
         else:
-            self.download_video_only(self.url, self.output_dir, ffmpeg_dir)
+            # If FFmpeg is MISSING, download the "best single file" (usually 720p)
+            # This guarantees audio and video are in one file, avoiding silence.
+            ydl_opts['format'] = 'best[ext=mp4]/best'
+
+        # 4. Cookie handling
+        cookie_txt = os.path.join(WORK_DIR, "cookies.txt")
+        using_cookie = False
+        if os.path.exists(cookie_txt) and os.path.getsize(cookie_txt) > 0:
+            self.log.emit("使用已同步的登录凭证...")
+            ydl_opts['cookiefile'] = cookie_txt
+            using_cookie = True
+
+        try:
+            self.log.emit(f"正在解析: {self.url}")
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(self.url, download=True)
+                if info:
+                    filename = ydl.prepare_filename(info)
+                    # If merged, update extension to mp4
+                    if ffmpeg_exists and ydl_opts.get('merge_output_format'):
+                        base, _ = os.path.splitext(filename)
+                        filename = base + "." + ydl_opts['merge_output_format']
+
+                    self.progress.emit(100)
+                    self.finished.emit(filename)
+                else:
+                    raise Exception("无法获取视频信息")
+
+        except Exception as e:
+            err_str = str(e)
+            if "cookie" in err_str.lower() or "sign in" in err_str.lower() or "403" in err_str:
+                if using_cookie:
+                    self.error.emit(f"下载被拒绝：Cookie 可能已失效。\n请删除旧 Cookie 并重新同步。\n(原始错误: {err_str[:50]}...)")
+                else:
+                    self.error.emit("下载失败：需要登录。\n请点击【一键同步】按钮。")
+            else:
+                self.error.emit(f"下载出错: {err_str}")
 
     def _progress_hook(self, d):
         if d['status'] == 'downloading':
@@ -349,4 +239,4 @@ class VideoDownloadWorker(QtCore.QThread):
             if total:
                 self.progress.emit(int(d.get('downloaded_bytes', 0) / total * 100))
         elif d['status'] == 'finished':
-            self.log.emit("下载完成，正在合并/处理...")
+            self.log.emit("下载完成，正在处理...")

@@ -207,6 +207,9 @@ class LoginDialog(QtWidgets.QDialog):
         self._timer.start()
 
     def _send(self):
+
+        print(f"【DEBUG】modePhone.isChecked(): {self.modePhone.isChecked()}")
+        print(f"【DEBUG】modeEmail.isChecked(): {self.modeEmail.isChecked()}")
         is_phone = self.modePhone.isChecked()
         phone = self.phoneEdit.text().strip() if is_phone else None
         email = self.emailEdit.text().strip() if not is_phone else None
@@ -283,6 +286,7 @@ class LoginDialog(QtWidgets.QDialog):
                 self.statusLab.setText(f"登录失败：{data['error']}")
                 return
             token = data.get("token")
+            print("✅ 真实 API Token (用于脚本):", token)
             if token:
                 self.api.set_token(token)
                 self.statusLab.setText("登录成功！")
